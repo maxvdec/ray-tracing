@@ -20,6 +20,8 @@ struct Uniforms {
     
     simd_float3 cameraCenter;
     simd_float2 viewportSize;
+    
+    int objCount;
 };
 
 struct Sphere {
@@ -27,10 +29,11 @@ struct Sphere {
     float radius;
 };
 
-struct Ray {
-    simd_float3 direction;
-    simd_float3 origin;
-};
+#define TYPE_SPHERE 0
 
+struct Object {
+    int type;
+    struct Sphere s; // Only used when Sphere is selected
+};
 
 #endif /* Definitions_h */

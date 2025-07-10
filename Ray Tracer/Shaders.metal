@@ -9,33 +9,82 @@
 #include "Definitions.h"
 using namespace metal;
 
-float3 ray_at(Ray r, float t) {
-    return r.origin + t * r.direction;
-}
+struct Ray {
+    float3 direction;
+    float3 origin;
+    
+    float lengthMin = 0.001;
+    float lengthMax = 1000.0;
+    
+    float3 at(float t) {
+        return origin + t * direction;
+    }
+};
 
-float hitSphere(Sphere sph, Ray r) {
-    float3 oc = sph.center - r.origin;
+struct HitInfo {
+    float3 point;
+    float3 normal;
+    float distance;
+    bool hit_front;
+    
+    void apply_normals(Ray r, float3 outward_normals) {
+        hit_front = dot(r.direction, outward_normals) < 0;
+        normal = hit_front ? outward_normals : -outward_normals;
+    }
+};
+
+bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
+    float3 oc = s.center - r.origin;
     auto a = dot(r.direction, r.direction);
     auto h = dot(r.direction, oc);
-    auto c = dot(oc, oc) - sph.radius * sph.radius;
-    auto discriminant = h * h - a * c;
+    auto c = dot(oc, oc) - s.radius * s.radius;
     
+    auto discriminant = h * h - a * c;
     if (discriminant < 0) {
-        return -1.0;
-    } else {
-        return (h - sqrt(discriminant)) / a;
+        return false;
     }
+    
+    auto sqrtd = sqrt(discriminant);
+    
+    auto root = (h - sqrtd) / a;
+    if (root <= r.lengthMin || root >= r.lengthMax) {
+        root = (h + sqrtd) / a;
+        if (root <= r.lengthMin || root >= r.lengthMax) {
+            return false;
+        }
+    }
+    
+    hit.distance = root;
+    hit.point = r.at(root);
+    float3 normals = (hit.point - s.center) / s.radius;
+    hit.apply_normals(r, normals);
+    
+    return true;
 }
 
-float4 color_ray(Ray r) {
-    Sphere s;
-    s.center = float3(0, 0, -1);
-    s.radius = 0.5;
+bool world_hit(constant Object* objs, int objectCount, Ray r, thread HitInfo& hit) {
+    HitInfo temp_hit;
+    bool hit_anything = false;
+    auto closest_so_far = r.lengthMax;
     
-    float hitResult = hitSphere(s, r);
-    if (hitResult > 0.0) {
-        float3 N = normalize(ray_at(r, hitResult) - float3(0, 0, -1));
-        return 0.5 * float4(N.x + 1, N.y + 1, N.z + 1, 1.0);
+    for (int i = 0; i < objectCount; ++i) {
+        Object obj = objs[i];
+        if (obj.type == TYPE_SPHERE && hitSphere(obj.s, r, temp_hit)) {
+            if (temp_hit.distance < closest_so_far) {
+                hit_anything = true;
+                closest_so_far = temp_hit.distance;
+                hit = temp_hit;
+            }
+        }
+    }
+    
+    return hit_anything;
+}
+
+float4 color_ray(constant Object *objs, int objectCount, Ray r) {
+    HitInfo info;
+    if (world_hit(objs, objectCount, r, info)) {
+        return float4(0.5 * (info.normal + float3(1, 1, 1)), 1.0);
     }
     
     float3 unitDirection = normalize(r.direction);
@@ -47,6 +96,7 @@ float4 color_ray(Ray r) {
 
 kernel void computeShader(texture2d<float, access::write> outputTexture [[texture(0)]],
                          constant Uniforms& uniforms [[buffer(0)]],
+                         constant Object* objs [[buffer(1)]],
                          uint2 gid [[thread_position_in_grid]]) {
     
     uint width = outputTexture.get_width();
@@ -68,5 +118,5 @@ kernel void computeShader(texture2d<float, access::write> outputTexture [[textur
     r.origin = uniforms.cameraCenter;
     r.direction = ray_dir;
     
-    outputTexture.write(color_ray(r), gid);
+    outputTexture.write(color_ray(objs, uniforms.objCount, r), gid);
 }

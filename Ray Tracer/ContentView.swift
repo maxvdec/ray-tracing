@@ -22,6 +22,8 @@ struct ContentView: View {
                                           height: Int(geometry.size.height))
                     
                     initRayTracing(renderer: renderer, geometry: geometry)
+                    renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.5)))
+                    renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100)))
                     
                     renderer.runComputeShader()
                 }
@@ -82,6 +84,8 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     var renderPipelineState: MTLRenderPipelineState!
     
     var computePipelineState: MTLComputePipelineState?
+    
+    var objects: [Object] = []
     
     public var uniforms: Uniforms = .init()
     
@@ -158,8 +162,15 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         computeEncoder.setTexture(texture, index: 0)
         
         uniforms.time = time
+        uniforms.objCount = Int32(objects.count)
         
         computeEncoder.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+        if objects.count != 0 {
+            computeEncoder.setBytes(&objects, length: MemoryLayout<Object>.stride * objects.count, index: 1)
+        } else {
+            var dummy = Object()
+            computeEncoder.setBytes(&dummy, length: MemoryLayout<Object>.stride, index: 1)
+        }
         
         let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
         let threadGroups = MTLSize(
