@@ -12,7 +12,7 @@ import MetalKit
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var renderer = MetalRenderer()
+    @StateObject var renderer = MetalRenderer()
     
     var body: some View {
         GeometryReader { geometry in
@@ -21,11 +21,39 @@ struct ContentView: View {
                     renderer.setupTexture(width: Int(geometry.size.width),
                                           height: Int(geometry.size.height))
                     
+                    initRayTracing(renderer: renderer, geometry: geometry)
+                    
                     renderer.runComputeShader()
                 }
         }
         .ignoresSafeArea()
     }
+}
+
+func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
+    let focalLength: Float = 1.0
+    let viewportHeight: Float = 2.0
+    let viewportWidth = viewportHeight * Float(geometry.size.width / geometry.size.height)
+    let cameraCenter = SIMD3<Float>(0.0, 0.0, 0.0)
+    
+    // Use Metal's native top-left origin
+    let viewportU = SIMD3<Float>(viewportWidth, 0, 0)
+    let viewportV = SIMD3<Float>(0, -viewportHeight, 0)  // Negative Y for top-left origin
+    
+    let pixelDeltaX = viewportU / Float(geometry.size.width)
+    let pixelDeltaY = viewportV / Float(geometry.size.height)
+    
+    // Calculate the viewport upper-left corner position
+    let viewportUpperLeft = cameraCenter - SIMD3<Float>(0, 0, focalLength) - viewportU / 2 - viewportV / 2
+    
+    // First pixel center (top-left pixel)
+    let firstPixelPos = viewportUpperLeft + 0.5 * (pixelDeltaX + pixelDeltaY)
+    
+    renderer.uniforms.pixelOrigin = firstPixelPos
+    renderer.uniforms.pixelDeltaX = pixelDeltaX
+    renderer.uniforms.pixelDeltaY = pixelDeltaY
+    renderer.uniforms.cameraCenter = cameraCenter
+    renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
 }
 
 struct MetalView: NSViewRepresentable {
@@ -222,8 +250,6 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         }
     }
     
-    // MARK: - Public API for setting pixels
-    
     /// Set a single pixel color
     func setPixel(x: Int, y: Int, red: Float, green: Float, blue: Float, alpha: Float) {
         guard x >= 0 && x < textureWidth && y >= 0 && y < textureHeight else { return }
@@ -277,11 +303,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         return (textureWidth, textureHeight)
     }
     
-    // MARK: - MTKViewDelegate
-    
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // Handle size changes if needed
-    }
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
     
     func draw(in view: MTKView) {
         guard let drawable = view.currentDrawable,
@@ -292,7 +314,6 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
             return
         }
         
-        // Update texture if needed
         if needsUpdate {
             updateTexture()
             needsUpdate = false
@@ -300,10 +321,8 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         
         renderEncoder.setRenderPipelineState(renderPipelineState)
         
-        // Set texture
         renderEncoder.setFragmentTexture(texture, index: 0)
         
-        // Draw fullscreen quad
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         
         renderEncoder.endEncoding()

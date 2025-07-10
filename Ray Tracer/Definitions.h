@@ -13,6 +13,18 @@
 struct Uniforms {
     simd_float4 color;
     float time;
+    
+    simd_float3 pixelDeltaX;
+    simd_float3 pixelDeltaY;
+    simd_float3 pixelOrigin;
+    
+    simd_float3 cameraCenter;
+    simd_float2 viewportSize;
+};
+
+struct Ray {
+    simd_float3 direction;
+    simd_float3 origin;
 };
 
 
