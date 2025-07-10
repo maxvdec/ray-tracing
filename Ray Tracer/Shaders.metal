@@ -9,12 +9,28 @@
 #include "Definitions.h"
 using namespace metal;
 
+struct Interval {
+    float max;
+    float min;
+    
+    float span() {
+        return max - min;
+    }
+    
+    bool contains(float x) {
+        return min <= x && x >= max;
+    }
+    
+    bool surrounds(float x) {
+        return min < x && max > x;
+    }
+};
+
 struct Ray {
     float3 direction;
     float3 origin;
     
-    float lengthMin = 0.001;
-    float lengthMax = 1000.0;
+    Interval distance = { 1000, 0.001 };
     
     float3 at(float t) {
         return origin + t * direction;
@@ -33,6 +49,15 @@ struct HitInfo {
     }
 };
 
+/// Mapped from 0 to 1
+float random_double(float seed) {
+    return fract(sin(seed) * 43758.5453123);
+}
+
+float random_in_range(Interval interval, float seed) {
+    return interval.min + (interval.max - interval.min) * random_double(seed);
+}
+
 bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
     float3 oc = s.center - r.origin;
     auto a = dot(r.direction, r.direction);
@@ -47,9 +72,9 @@ bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
     auto sqrtd = sqrt(discriminant);
     
     auto root = (h - sqrtd) / a;
-    if (root <= r.lengthMin || root >= r.lengthMax) {
+    if (!r.distance.surrounds(root)) {
         root = (h + sqrtd) / a;
-        if (root <= r.lengthMin || root >= r.lengthMax) {
+        if (!r.distance.surrounds(root)) {
             return false;
         }
     }
@@ -65,7 +90,7 @@ bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
 bool world_hit(constant Object* objs, int objectCount, Ray r, thread HitInfo& hit) {
     HitInfo temp_hit;
     bool hit_anything = false;
-    auto closest_so_far = r.lengthMax;
+    auto closest_so_far = r.distance.max;
     
     for (int i = 0; i < objectCount; ++i) {
         Object obj = objs[i];
@@ -98,6 +123,8 @@ kernel void computeShader(texture2d<float, access::write> outputTexture [[textur
                          constant Uniforms& uniforms [[buffer(0)]],
                          constant Object* objs [[buffer(1)]],
                          uint2 gid [[thread_position_in_grid]]) {
+    
+    float seed = float(gid.x) * 12.9898 + float(gid.y) * 78.233;
     
     uint width = outputTexture.get_width();
     uint height = outputTexture.get_height();
