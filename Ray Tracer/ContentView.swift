@@ -38,7 +38,7 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     
     // Use Metal's native top-left origin
     let viewportU = SIMD3<Float>(viewportWidth, 0, 0)
-    let viewportV = SIMD3<Float>(0, -viewportHeight, 0)  // Negative Y for top-left origin
+    let viewportV = SIMD3<Float>(0, -viewportHeight, 0) // Negative Y for top-left origin
     
     let pixelDeltaX = viewportU / Float(geometry.size.width)
     let pixelDeltaY = viewportV / Float(geometry.size.height)

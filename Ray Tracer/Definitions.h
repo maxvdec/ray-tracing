@@ -22,6 +22,11 @@ struct Uniforms {
     simd_float2 viewportSize;
 };
 
+struct Sphere {
+    simd_float3 center;
+    float radius;
+};
+
 struct Ray {
     simd_float3 direction;
     simd_float3 origin;
