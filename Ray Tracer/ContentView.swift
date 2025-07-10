@@ -20,22 +20,11 @@ struct ContentView: View {
                 .onAppear {
                     renderer.setupTexture(width: Int(geometry.size.width),
                                           height: Int(geometry.size.height))
+                    
+                    renderer.runComputeShader()
                 }
         }
         .ignoresSafeArea()
-    }
-}
-
-extension Color {
-    func toRGBA() -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat)? {
-        let uiColor = NSColor(self)
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
-
-        uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return (red, green, blue, alpha)
     }
 }
 
@@ -51,7 +40,9 @@ struct MetalView: NSViewRepresentable {
         return metalView
     }
     
-    func updateNSView(_ nsView: MTKView, context: Context) {}
+    func updateNSView(_ nsView: MTKView, context: Context) {
+        // Update view if needed
+    }
 }
 
 class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
@@ -62,10 +53,16 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     var texture: MTLTexture?
     var renderPipelineState: MTLRenderPipelineState!
     
+    var computePipelineState: MTLComputePipelineState?
+    
+    public var uniforms: Uniforms = .init()
+    
     private var pixelData: [SIMD4<Float>] = []
     private var textureWidth: Int = 0
     private var textureHeight: Int = 0
     private var needsUpdate = false
+    
+    private var time: Float = 0.0
     
     override init() {
         super.init()
@@ -77,6 +74,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         commandQueue = device.makeCommandQueue()
         
         let library = device.makeDefaultLibrary()
+        
         let vertexFunction = library?.makeFunction(name: "vertexShader")
         let fragmentFunction = library?.makeFunction(name: "fragmentShader")
         
@@ -89,6 +87,15 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
             renderPipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         } catch {
             print("Failed to create render pipeline state: \(error)")
+        }
+        
+        // Create compute pipeline
+        if let computeFunction = library?.makeFunction(name: "computeShader") {
+            do {
+                computePipelineState = try device.makeComputePipelineState(function: computeFunction)
+            } catch {
+                print("Failed to create compute pipeline state: \(error)")
+            }
         }
     }
     
@@ -110,6 +117,100 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         updateTexture()
     }
     
+    func runComputeShader() {
+        guard let texture = texture,
+              let computePipelineState = computePipelineState,
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder()
+        else {
+            return
+        }
+        
+        computeEncoder.setComputePipelineState(computePipelineState)
+        computeEncoder.setTexture(texture, index: 0)
+        
+        uniforms.time = time
+        
+        computeEncoder.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+        
+        let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
+        let threadGroups = MTLSize(
+            width: (textureWidth + threadGroupSize.width - 1) / threadGroupSize.width,
+            height: (textureHeight + threadGroupSize.height - 1) / threadGroupSize.height,
+            depth: 1
+        )
+        
+        computeEncoder.dispatchThreadgroups(threadGroups, threadsPerThreadgroup: threadGroupSize)
+        computeEncoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        
+        // Update time for next frame
+        time += 0.016 // ~60 FPS
+    }
+    
+    /// Run compute shader with custom parameters
+    func runComputeShader(time: Float) {
+        guard let texture = texture,
+              let computePipelineState = computePipelineState,
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder()
+        else {
+            return
+        }
+        
+        computeEncoder.setComputePipelineState(computePipelineState)
+        computeEncoder.setTexture(texture, index: 0)
+        
+        // Pass custom time parameter
+        var timeBuffer = time
+        computeEncoder.setBytes(&timeBuffer, length: MemoryLayout<Float>.size, index: 0)
+        
+        // Calculate thread group size
+        let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
+        let threadGroups = MTLSize(
+            width: (textureWidth + threadGroupSize.width - 1) / threadGroupSize.width,
+            height: (textureHeight + threadGroupSize.height - 1) / threadGroupSize.height,
+            depth: 1
+        )
+        
+        computeEncoder.dispatchThreadgroups(threadGroups, threadsPerThreadgroup: threadGroupSize)
+        computeEncoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+    }
+    
+    /// Run compute shader with custom buffer data
+    func runComputeShader<T>(withData data: T) {
+        guard let texture = texture,
+              let computePipelineState = computePipelineState,
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder()
+        else {
+            return
+        }
+        
+        computeEncoder.setComputePipelineState(computePipelineState)
+        computeEncoder.setTexture(texture, index: 0)
+        
+        // Pass custom data
+        var dataBuffer = data
+        computeEncoder.setBytes(&dataBuffer, length: MemoryLayout<T>.size, index: 0)
+        
+        // Calculate thread group size
+        let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
+        let threadGroups = MTLSize(
+            width: (textureWidth + threadGroupSize.width - 1) / threadGroupSize.width,
+            height: (textureHeight + threadGroupSize.height - 1) / threadGroupSize.height,
+            depth: 1
+        )
+        
+        computeEncoder.dispatchThreadgroups(threadGroups, threadsPerThreadgroup: threadGroupSize)
+        computeEncoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+    }
+    
     private func updateTexture() {
         guard let texture = texture else { return }
         
@@ -121,20 +222,29 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         }
     }
     
-    func setPixel(x: Int, y: Int, color: Color) {
+    // MARK: - Public API for setting pixels
+    
+    /// Set a single pixel color
+    func setPixel(x: Int, y: Int, red: Float, green: Float, blue: Float, alpha: Float) {
         guard x >= 0 && x < textureWidth && y >= 0 && y < textureHeight else { return }
         
-        let rgba = color.toRGBA()!
+        let index = y * textureWidth + x
+        pixelData[index] = SIMD4<Float>(red, green, blue, alpha)
+        needsUpdate = true
+    }
+    
+    /// Set a single pixel color using SIMD4<Float>
+    func setPixel(x: Int, y: Int, color: SIMD4<Float>) {
+        guard x >= 0 && x < textureWidth && y >= 0 && y < textureHeight else { return }
         
         let index = y * textureWidth + x
-        pixelData[index] = SIMD4<Float>(Float(rgba.red), Float(rgba.green), Float(rgba.blue), Float(rgba.alpha))
+        pixelData[index] = color
         needsUpdate = true
     }
     
     /// Fill entire texture with a color
-    func fillTexture(color: Color) {
-        let rgba = color.toRGBA()!
-        let color = SIMD4<Float>(Float(rgba.red), Float(rgba.green), Float(rgba.blue), Float(rgba.alpha))
+    func fillTexture(red: Float, green: Float, blue: Float, alpha: Float) {
+        let color = SIMD4<Float>(red, green, blue, alpha)
         for i in 0..<pixelData.count {
             pixelData[i] = color
         }
@@ -142,9 +252,8 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     }
     
     /// Fill a rectangular region with a color
-    func fillRect(x: Int, y: Int, width: Int, height: Int, color: Color) {
-        let rgba = color.toRGBA()!
-        let color = SIMD4<Float>(Float(rgba.red), Float(rgba.green), Float(rgba.blue), Float(rgba.alpha))
+    func fillRect(x: Int, y: Int, width: Int, height: Int, red: Float, green: Float, blue: Float, alpha: Float) {
+        let color = SIMD4<Float>(red, green, blue, alpha)
         
         for row in y..<min(y + height, textureHeight) {
             for col in x..<min(x + width, textureWidth) {
@@ -168,7 +277,11 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         return (textureWidth, textureHeight)
     }
     
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    // MARK: - MTKViewDelegate
+    
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // Handle size changes if needed
+    }
     
     func draw(in view: MTKView) {
         guard let drawable = view.currentDrawable,
@@ -179,6 +292,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
             return
         }
         
+        // Update texture if needed
         if needsUpdate {
             updateTexture()
             needsUpdate = false
@@ -186,8 +300,10 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         
         renderEncoder.setRenderPipelineState(renderPipelineState)
         
+        // Set texture
         renderEncoder.setFragmentTexture(texture, index: 0)
         
+        // Draw fullscreen quad
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         
         renderEncoder.endEncoding()
