@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		62981C7C2E2023C40032B29A /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 62981C7B2E2023C40032B29A /* README.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		62981C5B2E201F860032B29A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		62981C4D2E201F850032B29A /* Ray Tracer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Ray Tracer.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		62981C5A2E201F860032B29A /* Ray TracerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Ray TracerTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		62981C642E201F860032B29A /* Ray TracerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Ray TracerUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		62981C7B2E2023C40032B29A /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +80,7 @@
 		62981C442E201F850032B29A = {
 			isa = PBXGroup;
 			children = (
+				62981C7B2E2023C40032B29A /* README.md */,
 				62981C4F2E201F850032B29A /* Ray Tracer */,
 				62981C5D2E201F860032B29A /* Ray TracerTests */,
 				62981C672E201F860032B29A /* Ray TracerUITests */,
@@ -212,6 +218,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				62981C7C2E2023C40032B29A /* README.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
