@@ -63,43 +63,44 @@ bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread Hit
     return hit_anything;
 }
 
-float4 color_ray(constant Object* objs, int objectCount, thread Ray& r, thread float2& seed, int depth) {
-    if (depth <= 0) {
-        return float4(0, 0, 0, 1);
-    }
-
-    HitInfo info;
-    int hitObjectIndex = -1;
-    r.distance = {0.001, MAXFLOAT};
+float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& seed, int maxDepth) {
+    float3 accumulatedColor = float3(1.0, 1.0, 1.0);
+    float3 finalColor = float3(0.0);
     
-    if (world_hit(objs, objectCount, r, info, hitObjectIndex)) {
-        Object hitObject = objs[hitObjectIndex];
+    for (int depth = 0; depth < maxDepth; ++depth) {
+        r.distance = {0.001, MAXFLOAT};
         
-        if (hitObject.emission > 0.0) {
-            float3 emissionColor = float3(hitObject.emission, hitObject.emission, hitObject.emission);
-            return float4(emissionColor, 1.0);
+        HitInfo info;
+        int hitObjectIndex = -1;
+        
+        if (world_hit(objs, objectCount, r, info, hitObjectIndex)) {
+            Object hitObject = objs[hitObjectIndex];
+            
+            if (hitObject.emission > 0.0) {
+                float3 emissionColor = float3(hitObject.emission);
+                finalColor += accumulatedColor * emissionColor;
+                break;
+            }
+
+            float3 direction = info.normal + random_unit_vec(seed);
+            if (length(direction) < 1e-6) {
+                direction = info.normal;
+            }
+
+            r.origin = info.point;
+            r.direction = normalize(direction);
+            r.distance = {0.001, INFINITY};
+            
+            float3 albedo = float3(0.7, 0.7, 0.7);
+            accumulatedColor *= albedo;
+        } else {
+            break;
         }
-        
-        float3 direction = info.normal + random_unit_vec(seed);
-
-        if (length(direction) < 1e-6) {
-            direction = info.normal;
-        }
-
-        Ray scatteredRay;
-        scatteredRay.origin = info.point;
-        scatteredRay.direction = normalize(direction);
-        scatteredRay.distance = {0.001, INFINITY};
-
-        float4 bouncedColor = color_ray(objs, objectCount, scatteredRay, seed, depth - 1);
-
-        float3 albedo = float3(0.7, 0.7, 0.7);
-        
-        return float4(albedo * bouncedColor.rgb, 1.0);
     }
 
-    return float4(0.0, 0.0, 0.0, 1.0);
+    return float4(finalColor, 1.0);
 }
+
 
 void write_color(texture2d<float, access::read_write> texture, uint2 pos, float4 color) {
     Interval i = {0, 1};
@@ -182,6 +183,7 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
     if (uniforms.currentSample == 0) {
         finalColor = passAccumulator;
     } else {
+        
         float totalRaysSoFar = float(uniforms.currentSample * raysPerPass + raysPerPass);
         float passWeight = float(raysPerPass) / totalRaysSoFar;
         
