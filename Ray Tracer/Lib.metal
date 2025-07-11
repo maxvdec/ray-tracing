@@ -148,10 +148,9 @@ bool lambertianScatter(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenu
 
 bool metalScatter(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
     float3 reflected = reflect(r.direction, hit.normal);
-    float3 fuzzed = normalize(reflected + m.reflection_fuzz * random_unit_vec(seed));
-    scattered = { hit.point, fuzzed };
+    scattered = { hit.point, normalize(reflected) };
     attenuation = m.albedo;
-    return dot(scattered.direction, hit.normal) > 0.0;
+    return true;
 }
 
 bool materialScatters(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
