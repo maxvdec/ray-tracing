@@ -6,83 +6,29 @@
 //
 
 #include <metal_stdlib>
-#include "Definitions.h"
+#include "Lib.metal"
 using namespace metal;
 
-struct Interval {
-    float max;
-    float min;
-    
-    float span() {
-        return max - min;
-    }
-    
-    bool contains(float x) {
-        return min <= x && x <= max;
-    }
-    
-    bool surrounds(float x) {
-        return min < x && max > x;
-    }
-    
-    float clamp(float x) {
-        return metal::clamp(x, min, max);
-    }
-};
-
-struct Ray {
-    float3 direction;
-    float3 origin;
-    
-    Interval distance = { 1000, 0.001 };
-    
-    float3 at(float t) {
-        return origin + t * direction;
-    }
-};
-
-struct HitInfo {
-    float3 point;
-    float3 normal;
-    float distance;
-    bool hit_front;
-    
-    void apply_normals(Ray r, float3 outward_normals) {
-        hit_front = dot(r.direction, outward_normals) < 0;
-        normal = hit_front ? outward_normals : -outward_normals;
-    }
-};
-
-float random_double(float2 seed) {
-    return fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453123);
-}
-
-float random_in_range(Interval interval, float2 seed) {
-    return interval.min + (interval.max - interval.min) * random_double(seed);
-}
-
-float3 random_square(float2 seed) {
-    float x = random_double(seed) - 0.5;
-    float y = random_double(seed + float2(37.719, 11.135)) - 0.5;
-    return float3(x, y, 0.0);
-}
-
 bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
-    float3 oc = s.center - r.origin;
+    float3 oc = r.origin - s.center;
     auto a = dot(r.direction, r.direction);
-    auto h = dot(r.direction, oc);
+    auto b = dot(oc, r.direction);
     auto c = dot(oc, oc) - s.radius * s.radius;
     
-    auto discriminant = h * h - a * c;
+    auto discriminant = b * b - a * c;
     if (discriminant < 0) {
+        return false;
+    }
+    
+    if (a == 0) {
         return false;
     }
     
     auto sqrtd = sqrt(discriminant);
     
-    auto root = (h - sqrtd) / a;
+    auto root = (-b - sqrtd) / a;
     if (!r.distance.surrounds(root)) {
-        root = (h + sqrtd) / a;
+        root = (-b + sqrtd) / a;
         if (!r.distance.surrounds(root)) {
             return false;
         }
@@ -115,10 +61,19 @@ bool world_hit(constant Object* objs, int objectCount, Ray r, thread HitInfo& hi
     return hit_anything;
 }
 
-float4 color_ray(constant Object *objs, int objectCount, Ray r) {
+float4 color_ray(constant Object *objs, int objectCount, Ray r, thread float2& seed, int depth) {
+    if (depth <= 0) {
+        return float4(0, 0, 0, 1);
+    }
+    
     HitInfo info;
     if (world_hit(objs, objectCount, r, info)) {
-        return float4(0.5 * (info.normal + float3(1, 1, 1)), 1.0);
+        float3 direction = random_on_hemisphere(info.normal, seed);
+        Ray nRay;
+        nRay.origin = info.point;
+        nRay.direction = direction;
+        nRay.distance = {0.001, 1000};
+        return float4(0.7 * color_ray(objs, objectCount, nRay, seed, depth - 1));
     }
     
     float3 unitDirection = normalize(r.direction);
@@ -128,22 +83,13 @@ float4 color_ray(constant Object *objs, int objectCount, Ray r) {
 }
 
 void write_color(texture2d<float, access::write> texture, uint2 pos, float4 color) {
-    Interval i = {1, 0};
+    Interval i = {0, 1};
     float r = i.clamp(color.r);
     float g = i.clamp(color.g);
     float b = i.clamp(color.b);
     float a = i.clamp(color.a);
     float4 result = float4(r, g, b, a);
     texture.write(result, pos);
-}
-
-Ray getRay(int i, int j, Uniforms uniforms, float2 seed) {
-    float3 offset = random_square(seed);
-    auto pixel_sample = uniforms.pixelOrigin + ((i + offset.x) * uniforms.pixelDeltaX) + ((j + offset.y) * uniforms.pixelDeltaY);
-    auto ray_origin = uniforms.cameraCenter;
-    auto ray_dir = pixel_sample - ray_origin;
-    
-    return {ray_dir, ray_origin};
 }
 
 kernel void computeShader(texture2d<float, access::write> outputTexture [[texture(0)]],
@@ -162,14 +108,14 @@ kernel void computeShader(texture2d<float, access::write> outputTexture [[textur
     
     float4 color = float4(0, 0, 0, 1.0);
     
+    float2 seed = float2(
+        float(gid.x) * 12.9898 + float(gid.y) * 78.233 + float(height) * 37.719,
+        float(gid.y) * 39.346 + float(width) * 11.135 + uniforms.time * 0.1
+    );
+    
     for (int sample = 0; sample < uniforms.sampleCount; ++sample) {
-        float2 seed = float2(
-            float(gid.x) * 12.9898 + float(gid.y) * 78.233 + float(sample) * 37.719,
-            float(gid.y) * 39.346 + float(sample) * 11.135 + uniforms.time * 0.1
-        );
-        
         Ray r = getRay(pixel.x, pixel.y, uniforms, seed);
-        color += color_ray(objs, uniforms.objCount, r);
+        color += color_ray(objs, uniforms.objCount, r, seed, uniforms.maxRayDepth);
     }
     
     color *= uniforms.pixelSampleScale;

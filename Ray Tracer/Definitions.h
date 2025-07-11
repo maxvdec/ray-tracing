@@ -24,6 +24,8 @@ struct Uniforms {
     
     int objCount;
     int sampleCount;
+    
+    int maxRayDepth;
 };
 
 struct Sphere {

@@ -55,6 +55,7 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
     
     renderer.uniforms.sampleCount = 100
+    renderer.uniforms.maxRayDepth = 50
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
 }
 

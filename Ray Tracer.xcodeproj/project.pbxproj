@@ -34,9 +34,22 @@
 		62981C7B2E2023C40032B29A /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		62981C842E20D95A0032B29A /* Exceptions for "Ray Tracer" folder in "Ray Tracer" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Lib.metal,
+			);
+			target = 62981C4C2E201F850032B29A /* Ray Tracer */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		62981C4F2E201F850032B29A /* Ray Tracer */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				62981C842E20D95A0032B29A /* Exceptions for "Ray Tracer" folder in "Ray Tracer" target */,
+			);
 			path = "Ray Tracer";
 			sourceTree = "<group>";
 		};

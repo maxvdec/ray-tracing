@@ -16,7 +16,6 @@ struct VertexOut {
 vertex VertexOut vertexShader(uint vertexID [[vertex_id]]) {
     VertexOut out;
     
-    // Generate fullscreen quad
     float2 positions[4] = {
         float2(-1.0, -1.0),
         float2( 1.0, -1.0),
