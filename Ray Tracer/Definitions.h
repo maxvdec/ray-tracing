@@ -17,11 +17,13 @@ struct Uniforms {
     simd_float3 pixelDeltaX;
     simd_float3 pixelDeltaY;
     simd_float3 pixelOrigin;
+    float pixelSampleScale;
     
     simd_float3 cameraCenter;
     simd_float2 viewportSize;
     
     int objCount;
+    int sampleCount;
 };
 
 struct Sphere {

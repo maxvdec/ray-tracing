@@ -38,17 +38,14 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     let viewportWidth = viewportHeight * Float(geometry.size.width / geometry.size.height)
     let cameraCenter = SIMD3<Float>(0.0, 0.0, 0.0)
     
-    // Use Metal's native top-left origin
     let viewportU = SIMD3<Float>(viewportWidth, 0, 0)
-    let viewportV = SIMD3<Float>(0, -viewportHeight, 0) // Negative Y for top-left origin
+    let viewportV = SIMD3<Float>(0, -viewportHeight, 0)
     
     let pixelDeltaX = viewportU / Float(geometry.size.width)
     let pixelDeltaY = viewportV / Float(geometry.size.height)
     
-    // Calculate the viewport upper-left corner position
     let viewportUpperLeft = cameraCenter - SIMD3<Float>(0, 0, focalLength) - viewportU / 2 - viewportV / 2
     
-    // First pixel center (top-left pixel)
     let firstPixelPos = viewportUpperLeft + 0.5 * (pixelDeltaX + pixelDeltaY)
     
     renderer.uniforms.pixelOrigin = firstPixelPos
@@ -56,6 +53,9 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.pixelDeltaY = pixelDeltaY
     renderer.uniforms.cameraCenter = cameraCenter
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
+    
+    renderer.uniforms.sampleCount = 100
+    renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
 }
 
 struct MetalView: NSViewRepresentable {

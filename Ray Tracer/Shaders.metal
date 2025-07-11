@@ -18,11 +18,15 @@ struct Interval {
     }
     
     bool contains(float x) {
-        return min <= x && x >= max;
+        return min <= x && x <= max;
     }
     
     bool surrounds(float x) {
         return min < x && max > x;
+    }
+    
+    float clamp(float x) {
+        return metal::clamp(x, min, max);
     }
 };
 
@@ -49,13 +53,18 @@ struct HitInfo {
     }
 };
 
-/// Mapped from 0 to 1
-float random_double(float seed) {
-    return fract(sin(seed) * 43758.5453123);
+float random_double(float2 seed) {
+    return fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453123);
 }
 
-float random_in_range(Interval interval, float seed) {
+float random_in_range(Interval interval, float2 seed) {
     return interval.min + (interval.max - interval.min) * random_double(seed);
+}
+
+float3 random_square(float2 seed) {
+    float x = random_double(seed) - 0.5;
+    float y = random_double(seed + float2(37.719, 11.135)) - 0.5;
+    return float3(x, y, 0.0);
 }
 
 bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
@@ -118,13 +127,29 @@ float4 color_ray(constant Object *objs, int objectCount, Ray r) {
     return float4(result, 1.0);
 }
 
+void write_color(texture2d<float, access::write> texture, uint2 pos, float4 color) {
+    Interval i = {1, 0};
+    float r = i.clamp(color.r);
+    float g = i.clamp(color.g);
+    float b = i.clamp(color.b);
+    float a = i.clamp(color.a);
+    float4 result = float4(r, g, b, a);
+    texture.write(result, pos);
+}
+
+Ray getRay(int i, int j, Uniforms uniforms, float2 seed) {
+    float3 offset = random_square(seed);
+    auto pixel_sample = uniforms.pixelOrigin + ((i + offset.x) * uniforms.pixelDeltaX) + ((j + offset.y) * uniforms.pixelDeltaY);
+    auto ray_origin = uniforms.cameraCenter;
+    auto ray_dir = pixel_sample - ray_origin;
+    
+    return {ray_dir, ray_origin};
+}
 
 kernel void computeShader(texture2d<float, access::write> outputTexture [[texture(0)]],
                          constant Uniforms& uniforms [[buffer(0)]],
                          constant Object* objs [[buffer(1)]],
                          uint2 gid [[thread_position_in_grid]]) {
-    
-    float seed = float(gid.x) * 12.9898 + float(gid.y) * 78.233;
     
     uint width = outputTexture.get_width();
     uint height = outputTexture.get_height();
@@ -135,15 +160,19 @@ kernel void computeShader(texture2d<float, access::write> outputTexture [[textur
     
     float2 pixel = float2(gid.x, gid.y);
     
-    float3 pixelCenter = uniforms.pixelOrigin +
-                        pixel.x * uniforms.pixelDeltaX +
-                        pixel.y * uniforms.pixelDeltaY;
+    float4 color = float4(0, 0, 0, 1.0);
     
-    float3 ray_dir = normalize(pixelCenter - uniforms.cameraCenter);
+    for (int sample = 0; sample < uniforms.sampleCount; ++sample) {
+        float2 seed = float2(
+            float(gid.x) * 12.9898 + float(gid.y) * 78.233 + float(sample) * 37.719,
+            float(gid.y) * 39.346 + float(sample) * 11.135 + uniforms.time * 0.1
+        );
+        
+        Ray r = getRay(pixel.x, pixel.y, uniforms, seed);
+        color += color_ray(objs, uniforms.objCount, r);
+    }
     
-    Ray r;
-    r.origin = uniforms.cameraCenter;
-    r.direction = ray_dir;
+    color *= uniforms.pixelSampleScale;
     
-    outputTexture.write(color_ray(objs, uniforms.objCount, r), gid);
+    write_color(outputTexture, gid, color);
 }
