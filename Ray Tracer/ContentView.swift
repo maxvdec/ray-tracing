@@ -7,6 +7,7 @@
 
 import Cocoa
 import Combine
+import Foundation
 import Metal
 import MetalKit
 import SwiftUI
@@ -38,6 +39,13 @@ struct ContentView: View {
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 8)
+                                    .background(Color.black.opacity(0.7))
+                                    .cornerRadius(8)
+                                
+                                Text("Tile: \(renderer.currentTile + 1)/\(renderer.totalTiles)")
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 4)
                                     .background(Color.black.opacity(0.7))
                                     .cornerRadius(8)
                                 
@@ -93,9 +101,10 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.pixelDeltaY = pixelDeltaY
     renderer.uniforms.cameraCenter = cameraCenter
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
+    renderer.maxIterations = 10
     
     renderer.uniforms.sampleCount = 1
-    renderer.uniforms.maxRayDepth = 10
+    renderer.uniforms.maxRayDepth = 50
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
 }
 
@@ -137,11 +146,28 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     
     private var time: Float = 0.0
     
+    // Tile-based rendering properties
     private var isRendering = false
     var renderProgress: Float = 0.0
     private var currentSample = 0
-    private var maxSamples = 100
+    var maxIterations = 3
     private var renderTimer: Timer?
+    
+    // Tile management
+    private let tileSize = 64 // 64x64 pixel tiles
+    private var tiles: [TileInfo] = []
+    private var currentTileIndex = 0
+    var currentTile: Int { currentTileIndex }
+    var totalTiles: Int { tiles.count }
+    
+    // Tile structure
+    struct TileInfo {
+        let x: Int
+        let y: Int
+        let width: Int
+        let height: Int
+        var completedSamples: Int = 0
+    }
     
     override init() {
         super.init()
@@ -193,7 +219,29 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         textureDescriptor.usage = [.shaderRead, .shaderWrite]
         
         texture = device.makeTexture(descriptor: textureDescriptor)
+        
+        // Generate tiles
+        generateTiles()
+        
         updateTexture()
+    }
+    
+    private func generateTiles() {
+        tiles.removeAll()
+        
+        let tilesX = (textureWidth + tileSize - 1) / tileSize
+        let tilesY = (textureHeight + tileSize - 1) / tileSize
+        
+        for y in 0..<tilesY {
+            for x in 0..<tilesX {
+                let tileX = x * tileSize
+                let tileY = y * tileSize
+                let tileWidth = min(tileSize, textureWidth - tileX)
+                let tileHeight = min(tileSize, textureHeight - tileY)
+                
+                tiles.append(TileInfo(x: tileX, y: tileY, width: tileWidth, height: tileHeight))
+            }
+        }
     }
     
     func runComputeShader() {
@@ -394,16 +442,24 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     }
     
     func startProgressiveRender() {
-        guard !isRendering else { return }
+        guard !isRendering else {
+            return
+        }
         
         isRendering = true
         currentSample = 0
+        currentTileIndex = 0
         renderProgress = 0.0
+        
+        // Reset all tiles
+        for i in 0..<tiles.count {
+            tiles[i].completedSamples = 0
+        }
         
         clearTexture()
         
         renderTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { _ in
-            self.renderSample()
+            self.renderTile()
         }
     }
     
@@ -413,18 +469,35 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         isRendering = false
     }
        
-    private func renderSample() {
-        guard currentSample < maxSamples else {
-            stopProgressiveRender()
+    private func renderTile() {
+        guard currentTileIndex < tiles.count else {
+            // All tiles for current sample completed
+            currentSample += 1
+            if currentSample >= maxIterations {
+                stopProgressiveRender()
+                return
+            }
+            // Start next sample
+            currentTileIndex = 0
+            for i in 0..<tiles.count {
+                tiles[i].completedSamples = 0
+            }
             return
         }
-           
-        // Run compute shader for one sample
-        runComputeShaderSample(sampleIndex: currentSample)
-           
-        currentSample += 1
-        renderProgress = Float(currentSample) / Float(maxSamples)
-           
+        
+        let tile = tiles[currentTileIndex]
+        
+        // Render this tile
+        runComputeShaderForTile(tile: tile, sampleIndex: currentSample)
+        
+        tiles[currentTileIndex].completedSamples += 1
+        currentTileIndex += 1
+        
+        // Update progress
+        let totalWork = tiles.count * maxIterations
+        let completedWork = currentSample * tiles.count + currentTileIndex
+        renderProgress = Float(completedWork) / Float(totalWork)
+        
         // Force a redraw
         DispatchQueue.main.async {
             self.objectWillChange.send()
@@ -436,6 +509,54 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         updateTexture()
     }
     
+    func runComputeShaderForTile(tile: TileInfo, sampleIndex: Int) {
+        guard let texture = texture,
+              let computePipelineState = computePipelineState,
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder()
+        else {
+            return
+        }
+            
+        computeEncoder.setComputePipelineState(computePipelineState)
+        computeEncoder.setTexture(texture, index: 0)
+            
+        var sampleUniforms = uniforms
+        sampleUniforms.sampleCount = 1
+        sampleUniforms.currentSample = Int32(sampleIndex)
+        sampleUniforms.totalSamples = Int32(maxIterations)
+        sampleUniforms.time = time
+        sampleUniforms.objCount = Int32(objects.count)
+        
+        // Add tile information to uniforms
+        sampleUniforms.tileX = Int32(tile.x)
+        sampleUniforms.tileY = Int32(tile.y)
+        sampleUniforms.tileWidth = Int32(tile.width)
+        sampleUniforms.tileHeight = Int32(tile.height)
+            
+        computeEncoder.setBytes(&sampleUniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+            
+        if objects.count != 0 {
+            computeEncoder.setBytes(&objects, length: MemoryLayout<Object>.stride * objects.count, index: 1)
+        } else {
+            var dummy = Object()
+            computeEncoder.setBytes(&dummy, length: MemoryLayout<Object>.stride, index: 1)
+        }
+        
+        let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
+        let threadGroups = MTLSize(
+            width: (tile.width + threadGroupSize.width - 1) / threadGroupSize.width,
+            height: (tile.height + threadGroupSize.height - 1) / threadGroupSize.height,
+            depth: 1
+        )
+            
+        computeEncoder.dispatchThreadgroups(threadGroups, threadsPerThreadgroup: threadGroupSize)
+        computeEncoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+    }
+    
+    // Keep the old method for backward compatibility
     func runComputeShaderSample(sampleIndex: Int) {
         guard let texture = texture,
               let computePipelineState = computePipelineState,
@@ -451,7 +572,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         var sampleUniforms = uniforms
         sampleUniforms.sampleCount = 1
         sampleUniforms.currentSample = Int32(sampleIndex)
-        sampleUniforms.totalSamples = Int32(maxSamples)
+        sampleUniforms.totalSamples = Int32(maxIterations)
         sampleUniforms.time = time
         sampleUniforms.objCount = Int32(objects.count)
             

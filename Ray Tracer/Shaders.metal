@@ -20,7 +20,7 @@ bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
         return false;
     }
     
-    if (a == 0) {
+    if (abs(a) < 1e-6) {
         return false;
     }
     
@@ -62,37 +62,61 @@ bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread Hit
     return hit_anything;
 }
 
-float4 color_ray(constant Object *objs, int objectCount, thread Ray& r, thread float2& seed, int depth) {
-    if (depth <= 0) {
-        return float4(0, 0, 0, 1);
+float4 color_ray(constant Object* objs, int objectCount, thread Ray& r, thread float2& seed, int maxDepth) {
+    float4 finalColor = float4(0, 0, 0, 1);
+    float4 attenuation = float4(1, 1, 1, 1);
+    
+    Ray currentRay = r;
+    
+    for (int depth = 0; depth < maxDepth; ++depth) {
+        HitInfo info;
+        if (world_hit(objs, objectCount, currentRay, info)) {
+            attenuation *= float4(0.5, 0.5, 0.5, 1.0);
+            
+            float3 direction = random_on_hemisphere(info.normal, seed);
+            
+            if (length(direction) < 1e-6) {
+                break;
+            }
+            
+            currentRay.origin = info.point;
+            currentRay.direction = normalize(direction);
+            currentRay.distance = {0.001, 1000};
+        } else {
+            float3 unitDirection = normalize(currentRay.direction);
+            auto a = 0.5 * (unitDirection.y + 1.0);
+            auto skyColor = (1.0 - a) * float3(1.0, 1.0, 1.0) + a * float3(0.5, 0.7, 1.0);
+            finalColor = attenuation * float4(skyColor, 1.0);
+            break;
+        }
+    
+        if (depth > 3) {
+            float surviveProbability = max(max(attenuation.r, attenuation.g), attenuation.b);
+            if (surviveProbability < random_double(seed)) {
+                break;
+            }
+            attenuation /= surviveProbability;
+        }
     }
     
-    HitInfo info;
-    if (world_hit(objs, objectCount, r, info)) {
-        float3 direction = random_on_hemisphere(info.normal, seed);
-        Ray nRay;
-        nRay.origin = info.point;
-        nRay.direction = direction;
-        nRay.distance = {0.001, 1000};
-        return float4(0.7 * color_ray(objs, objectCount, nRay, seed, depth - 1));
-    }
-    
-    float3 unitDirection = normalize(r.direction);
-    auto a = 0.5 * (unitDirection.y + 1.0);
-    auto result = (1.0 - a) * float3(1.0, 1.0, 1.0) + a * float3(0.5, 0.7, 1.0);
-    return float4(result, 1.0);
+    return finalColor;
 }
 
 void write_color(texture2d<float, access::read_write> texture, uint2 pos, float4 color) {
     Interval i = {0, 1};
-    float r = i.clamp(color.r);
-    float g = i.clamp(color.g);
-    float b = i.clamp(color.b);
-    float a = i.clamp(color.a);
+    
+    float r = i.clamp(isnan(color.r) ? 0.0 : color.r);
+    float g = i.clamp(isnan(color.g) ? 0.0 : color.g);
+    float b = i.clamp(isnan(color.b) ? 0.0 : color.b);
+    float a = i.clamp(isnan(color.a) ? 1.0 : color.a);
+    
     float4 result = float4(r, g, b, a);
     texture.write(result, pos);
 }
 
+void error_write(texture2d<float, access::read_write> texture, uint2 pos) {
+    texture.write(float4(1.0, 1.0, 0.0, 1.0), pos);
+}
 
 kernel void computeShader(texture2d<float, access::read_write> outputTexture [[texture(0)]],
                          constant Uniforms& uniforms [[buffer(0)]],
@@ -102,21 +126,39 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
     uint width = outputTexture.get_width();
     uint height = outputTexture.get_height();
     
-    if (gid.x >= width || gid.y >= height) {
+    uint2 pixelPos = uint2(uniforms.tileX + gid.x, uniforms.tileY + gid.y);
+    
+    if (gid.x >= uint(uniforms.tileWidth) || gid.y >= uint(uniforms.tileHeight)) {
+        error_write(outputTexture, gid);
         return;
     }
     
-    float2 pixel = float2(gid.x, gid.y);
+    if (pixelPos.x >= width || pixelPos.y >= height) {
+        error_write(outputTexture, gid);
+        return;
+    }
     
-    float4 existingColor = outputTexture.read(gid);
-    
+    if (uniforms.currentSample > 10000) {
+        error_write(outputTexture, gid);
+        return;
+    }
+        
+    float4 existingColor = outputTexture.read(pixelPos);
+
     float2 seed = float2(
-        float(gid.x) * 12.9898 + float(gid.y) * 78.233 + float(uniforms.currentSample) * 37.719,
-        float(gid.y) * 39.346 + float(width) * 11.135 + uniforms.time * 0.1
+        float(pixelPos.x * 1973 + pixelPos.y * 9277 + uniforms.currentSample * 2699) / 65536.0,
+        float(pixelPos.y * 4513 + width * 6389 + uniforms.currentSample * 3011) / 65536.0
     );
     
-    Ray r = getRay(gid.x, gid.y, uniforms, seed);
-    float4 newSample = color_ray(objs, uniforms.objCount, r, seed, uniforms.maxRayDepth);
+    Ray r = getRay(pixelPos.x, pixelPos.y, uniforms, seed);
+    
+    if (length(r.direction) < 1e-6 || isnan(r.direction.x) || isnan(r.direction.y) || isnan(r.direction.z)) {
+        error_write(outputTexture, gid);
+        return;
+    }
+    
+    int safeMaxDepth = min(uniforms.maxRayDepth, 10);
+    float4 newSample = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth);
     
     float4 accumulatedColor;
     if (uniforms.currentSample == 0) {
@@ -126,5 +168,5 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
         accumulatedColor = existingColor * (1.0 - weight) + newSample * weight;
     }
     
-    write_color(outputTexture, gid, accumulatedColor);
+    write_color(outputTexture, pixelPos, accumulatedColor);
 }

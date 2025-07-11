@@ -28,6 +28,12 @@ struct Uniforms {
     int maxRayDepth;
     int currentSample;
     int totalSamples;
+    
+    // Tile information
+    int tileX;
+    int tileY;
+    int tileWidth;
+    int tileHeight;
 };
 
 struct Sphere {

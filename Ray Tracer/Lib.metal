@@ -53,9 +53,19 @@ struct HitInfo {
     }
 };
 
+uint pcg_hash(uint input) {
+    uint state = input * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
 float random_double(thread float2& seed) {
-    seed = fract(sin(seed * float2(12.9898, 78.233)) * 43758.5453123);
-    return seed.x;
+    uint2 iseed = uint2(seed * 65536.0);
+    uint hash = pcg_hash(iseed.x ^ pcg_hash(iseed.y));
+
+    seed = fract(seed + float2(0.618034, 0.381966));
+    
+    return float(hash) / 4294967296.0;
 }
 
 float random_in_range(Interval interval, thread float2& seed) {
@@ -86,18 +96,20 @@ float3 random_vec_clamped(Interval interval, thread float2& seed) {
 }
 
 float3 random_unit_vec(thread float2& seed) {
-    float x = random_double(seed);
-    float y = random_double(seed);
-    float z = random_double(seed);
+    float x1, x2, w;
+    do {
+        x1 = 2.0 * random_double(seed) - 1.0;
+        x2 = 2.0 * random_double(seed) - 1.0;
+        w = x1 * x1 + x2 * x2;
+    } while (w >= 1.0);
     
-    float3 v = float3(x, y, z) * 2.0 - 1.0;
+    float multiplier = 2.0 * sqrt(1.0 - w);
     
-    float len_sq = dot(v, v);
-    if (len_sq < 1e-6) {
-        return float3(1.0, 0.0, 0.0); 
-    }
-    
-    return normalize(v);
+    return float3(
+        x1 * multiplier,
+        x2 * multiplier,
+        1.0 - 2.0 * w
+    );
 }
 
 float3 random_on_hemisphere(float3 normals, thread float2& seed) {
