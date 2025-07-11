@@ -56,8 +56,8 @@ struct ContentView: View {
                         initRayTracing(renderer: renderer, geometry: geometry)
                         let material_ground = SwiftMaterial(color: [0.8, 0.8, 0.0, 1.0]).toMaterial()
                         let material_center = SwiftMaterial(color: [0.1, 0.2, 0.5, 1.0]).toMaterial()
-                        let material_left = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.8, 0.8, 1.0]).toMaterial()
-                        let material_right = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.6, 0.2, 1.0]).toMaterial()
+                        let material_left = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.8, 0.8, 1.0], reflection_fuzz: 0.7).toMaterial()
+                        let material_right = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.6, 0.2, 1.0], reflection_fuzz: 0.3).toMaterial()
                         
                         renderer.objects.append(Object(type: 0, s: Sphere(center: [0, -100.5, -1.0], radius: 100.0), mat: material_ground))
                         renderer.objects.append(Object(type: 0, s: Sphere(center: [0.0, 0.0, -1.2], radius: 0.5), mat: material_center))
