@@ -26,9 +26,9 @@ struct ContentView: View {
                                               height: Int(geometry.size.height))
                         
                         initRayTracing(renderer: renderer, geometry: geometry)
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, 3), radius: 1), mat: Material(emission: 10, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.2), mat: Material(emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100), mat: Material(emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, 3), radius: 1), mat: Material(type: 0, emission: 10, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.2), mat: Material(type: 0, emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100), mat: Material(type: 0, emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
                     }
                 Button {
                     showSettings.toggle()

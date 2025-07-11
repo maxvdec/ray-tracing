@@ -42,12 +42,16 @@ struct Sphere {
     float radius;
 };
 
-#define TYPE_SPHERE 0
+#define LAMBIERTIAN 0
+#define REFLECTEE 1
 
 struct Material {
+    int type;
     float emission;
     simd_float4 albedo;
 };
+
+#define TYPE_SPHERE 0
 
 struct Object {
     int type;

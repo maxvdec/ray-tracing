@@ -21,6 +21,20 @@ enum ShapeType: Int32 {
     }
 }
 
+enum MaterialType: Int32 {
+    case lambertian = 0
+    case reflectee = 1
+    
+    func asString() -> String {
+        switch self {
+        case .lambertian:
+            return "Lambertian"
+        case .reflectee:
+            return "Reflectee"
+        }
+    }
+}
+
 struct SwiftObject: Identifiable {
     var obj: Object = .init()
     let type: ShapeType

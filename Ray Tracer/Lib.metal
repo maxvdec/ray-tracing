@@ -128,3 +128,37 @@ float linear_to_gamma(float linear) {
     
     return 0;
 }
+
+bool isVecNearZero(float3 vec) {
+    auto s = 1e-8;
+    return (fabs(vec.x) < s) && (fabs(vec.y) < s) && (fabs(vec.z) < s);
+}
+
+bool lambertianScatter(Material m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
+    auto scatter_direction = hit.normal + random_unit_vec(seed);
+    
+    if (isVecNearZero(scatter_direction)) {
+        scatter_direction = hit.normal;
+    }
+    
+    scattered = {hit.point, scatter_direction};
+    attenuation = m.albedo;
+    return true;
+}
+
+bool metalScatter(Material m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
+    float3 reflected = reflect(r.direction, hit.normal);
+    scattered = {hit.point, reflected};
+    attenuation = m.albedo;
+    return true;
+}
+
+bool materialScatters(Material m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
+    if (m.type == LAMBIERTIAN) {
+        return lambertianScatter(m, r, hit, attenuation, scattered, seed);
+    } else if (m.type == REFLECTEE) {
+        return metalScatter(m, r, hit, attenuation, scattered, seed);
+    } else {
+        return false;
+    }
+}
