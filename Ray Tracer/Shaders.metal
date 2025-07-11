@@ -62,45 +62,36 @@ bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread Hit
     return hit_anything;
 }
 
-float4 color_ray(constant Object* objs, int objectCount, thread Ray& r, thread float2& seed, int maxDepth) {
-    float4 finalColor = float4(0, 0, 0, 1);
-    float4 attenuation = float4(1, 1, 1, 1);
-    
-    Ray currentRay = r;
-    
-    for (int depth = 0; depth < maxDepth; ++depth) {
-        HitInfo info;
-        if (world_hit(objs, objectCount, currentRay, info)) {
-            attenuation *= float4(0.5, 0.5, 0.5, 1.0);
-            
-            float3 direction = random_on_hemisphere(info.normal, seed);
-            
-            if (length(direction) < 1e-6) {
-                break;
-            }
-            
-            currentRay.origin = info.point;
-            currentRay.direction = normalize(direction);
-            currentRay.distance = {0.001, 1000};
-        } else {
-            float3 unitDirection = normalize(currentRay.direction);
-            auto a = 0.5 * (unitDirection.y + 1.0);
-            auto skyColor = (1.0 - a) * float3(1.0, 1.0, 1.0) + a * float3(0.5, 0.7, 1.0);
-            finalColor = attenuation * float4(skyColor, 1.0);
-            break;
-        }
-    
-        if (depth > 3) {
-            float surviveProbability = max(max(attenuation.r, attenuation.g), attenuation.b);
-            if (surviveProbability < random_double(seed)) {
-                break;
-            }
-            attenuation /= surviveProbability;
-        }
+float4 color_ray(constant Object* objs, int objectCount, thread Ray& r, thread float2& seed, int depth) {
+    if (depth <= 0) {
+        return float4(0, 0, 0, 1);
     }
-    
-    return finalColor;
+
+    HitInfo info;
+    if (world_hit(objs, objectCount, r, info)) {
+        float3 direction = random_on_hemisphere(info.normal, seed);
+
+        if (length(direction) < 1e-6) {
+            return float4(0, 0, 0, 1);
+        }
+
+        Ray scatteredRay;
+        scatteredRay.origin = info.point;
+        scatteredRay.direction = normalize(direction);
+        scatteredRay.distance = {0.001, INFINITY};
+
+        float4 bouncedColor = color_ray(objs, objectCount, scatteredRay, seed, depth - 1);
+
+        return float4(0.5, 0.5, 0.5, 1.0) * bouncedColor;
+    }
+
+    float3 unitDirection = normalize(r.direction);
+    float a = 0.5 * (unitDirection.y + 1.0);
+    float3 skyColor = (1.0 - a) * float3(1.0, 1.0, 1.0) + a * float3(0.5, 0.7, 1.0);
+
+    return float4(skyColor, 1.0);
 }
+
 
 void write_color(texture2d<float, access::read_write> texture, uint2 pos, float4 color) {
     Interval i = {0, 1};
