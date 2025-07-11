@@ -122,9 +122,9 @@ void error_write(texture2d<float, access::read_write> texture, uint2 pos) {
 }
 
 kernel void computeShader(texture2d<float, access::read_write> outputTexture [[texture(0)]],
-                                    constant Uniforms& uniforms [[buffer(0)]],
-                                    constant Object* objs [[buffer(1)]],
-                                    uint2 gid [[thread_position_in_grid]]) {
+                                          constant Uniforms& uniforms [[buffer(0)]],
+                                          constant Object* objs [[buffer(1)]],
+                                          uint2 gid [[thread_position_in_grid]]) {
     
     uint width = outputTexture.get_width();
     uint height = outputTexture.get_height();
@@ -141,39 +141,52 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
         return;
     }
     
-    const int samplesPerFrame = uniforms.sampleCount;
+    if (uniforms.currentSample > 10000) {
+        error_write(outputTexture, gid);
+        return;
+    }
     
-    float4 accumulatedColor = float4(0.0);
+    const int raysPerPass = uniforms.sampleCount;
     
-    for (int sample = 0; sample < samplesPerFrame; sample++) {
+    float4 passAccumulator = float4(0.0);
+    
+    for (int rayIndex = 0; rayIndex < raysPerPass; rayIndex++) {
         float2 seed = float2(
-            float(pixelPos.x * 1973 + pixelPos.y * 9277 + (uniforms.currentSample * samplesPerFrame + sample) * 2699) / 65536.0,
-            float(pixelPos.y * 4513 + width * 6389 + (uniforms.currentSample * samplesPerFrame + sample) * 3011) / 65536.0
+            float(pixelPos.x * 1973 + pixelPos.y * 9277 + uniforms.currentSample * 26699 + rayIndex * 7919) / 65536.0,
+            float(pixelPos.y * 4513 + pixelPos.x * 6389 + uniforms.currentSample * 30103 + rayIndex * 8191) / 65536.0
         );
+        
+        seed = fract(seed + float2(0.618034, 0.381966));
         
         Ray r = getRay(pixelPos.x, pixelPos.y, uniforms, seed);
         
         if (length(r.direction) < 1e-6 || isnan(r.direction.x) || isnan(r.direction.y) || isnan(r.direction.z)) {
-            continue; // Skip bad rays
+            continue; // Skip invalid rays
         }
         
         int safeMaxDepth = min(uniforms.maxRayDepth, 10);
-        float4 sampleColor = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth);
+        float4 rayColor = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth);
         
-        accumulatedColor += sampleColor;
+        rayColor.rgb = clamp(rayColor.rgb, 0.0, 10.0);
+        
+        passAccumulator += rayColor;
     }
-    
-    accumulatedColor /= float(samplesPerFrame);
+
+    passAccumulator /= float(raysPerPass);
     
     float4 existingColor = outputTexture.read(pixelPos);
-    float4 finalColor;
     
+    existingColor.rgb = existingColor.rgb * existingColor.rgb;
+    
+    float4 finalColor;
     if (uniforms.currentSample == 0) {
-        finalColor = accumulatedColor;
+        finalColor = passAccumulator;
     } else {
-        float totalSamples = float(uniforms.currentSample * samplesPerFrame + samplesPerFrame);
-        float weight = float(samplesPerFrame) / totalSamples;
-        finalColor = existingColor * (1.0 - weight) + accumulatedColor * weight;
+        float totalRaysSoFar = float(uniforms.currentSample * raysPerPass + raysPerPass);
+        float passWeight = float(raysPerPass) / totalRaysSoFar;
+        
+        finalColor.rgb = existingColor.rgb * (1.0 - passWeight) + passAccumulator.rgb * passWeight;
+        finalColor.a = 1.0;
     }
     
     write_color(outputTexture, pixelPos, finalColor);

@@ -25,7 +25,8 @@ struct ContentView: View {
                                               height: Int(geometry.size.height))
                         
                         initRayTracing(renderer: renderer, geometry: geometry)
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.5), emission: 1))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.2), emission: 1))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(-1, 0, -1), radius: 0.2), emission: 0))
                         renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100), emission: 0))
                     }
                 
@@ -101,10 +102,10 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.pixelDeltaY = pixelDeltaY
     renderer.uniforms.cameraCenter = cameraCenter
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
-    renderer.maxIterations = 3
+    renderer.maxIterations = 20
     
-    renderer.uniforms.sampleCount = 1000
-    renderer.uniforms.maxRayDepth = 100
+    renderer.uniforms.sampleCount = 16
+    renderer.uniforms.maxRayDepth = 10
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
 }
 
