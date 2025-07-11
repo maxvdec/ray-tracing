@@ -42,7 +42,7 @@ bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
     return true;
 }
 
-bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread HitInfo& hit) {
+bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread HitInfo& hit, thread int& hitObjectIndex) {
     HitInfo temp_hit;
     bool hit_anything = false;
     auto closest_so_far = r.distance.max;
@@ -54,6 +54,7 @@ bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread Hit
                 hit_anything = true;
                 closest_so_far = temp_hit.distance;
                 hit = temp_hit;
+                hitObjectIndex = i;
                 r.distance.max = closest_so_far;
             }
         }
@@ -68,11 +69,21 @@ float4 color_ray(constant Object* objs, int objectCount, thread Ray& r, thread f
     }
 
     HitInfo info;
-    if (world_hit(objs, objectCount, r, info)) {
-        float3 direction = random_on_hemisphere(info.normal, seed);
+    int hitObjectIndex = -1;
+    r.distance = {0.001, MAXFLOAT};
+    
+    if (world_hit(objs, objectCount, r, info, hitObjectIndex)) {
+        Object hitObject = objs[hitObjectIndex];
+        
+        if (hitObject.emission > 0.0) {
+            float3 emissionColor = float3(hitObject.emission, hitObject.emission, hitObject.emission);
+            return float4(emissionColor, 1.0);
+        }
+        
+        float3 direction = info.normal + random_unit_vec(seed);
 
         if (length(direction) < 1e-6) {
-            return float4(0, 0, 0, 1);
+            direction = info.normal;
         }
 
         Ray scatteredRay;
@@ -82,16 +93,13 @@ float4 color_ray(constant Object* objs, int objectCount, thread Ray& r, thread f
 
         float4 bouncedColor = color_ray(objs, objectCount, scatteredRay, seed, depth - 1);
 
-        return float4(0.5, 0.5, 0.5, 1.0) * bouncedColor;
+        float3 albedo = float3(0.7, 0.7, 0.7);
+        
+        return float4(albedo * bouncedColor.rgb, 1.0);
     }
 
-    float3 unitDirection = normalize(r.direction);
-    float a = 0.5 * (unitDirection.y + 1.0);
-    float3 skyColor = (1.0 - a) * float3(1.0, 1.0, 1.0) + a * float3(0.5, 0.7, 1.0);
-
-    return float4(skyColor, 1.0);
+    return float4(0.0, 0.0, 0.0, 1.0);
 }
-
 
 void write_color(texture2d<float, access::read_write> texture, uint2 pos, float4 color) {
     Interval i = {0, 1};
@@ -100,6 +108,10 @@ void write_color(texture2d<float, access::read_write> texture, uint2 pos, float4
     float g = i.clamp(isnan(color.g) ? 0.0 : color.g);
     float b = i.clamp(isnan(color.b) ? 0.0 : color.b);
     float a = i.clamp(isnan(color.a) ? 1.0 : color.a);
+    r = linear_to_gamma(r);
+    g = linear_to_gamma(g);
+    b = linear_to_gamma(b);
+    a = linear_to_gamma(a);
     
     float4 result = float4(r, g, b, a);
     texture.write(result, pos);
@@ -110,9 +122,9 @@ void error_write(texture2d<float, access::read_write> texture, uint2 pos) {
 }
 
 kernel void computeShader(texture2d<float, access::read_write> outputTexture [[texture(0)]],
-                         constant Uniforms& uniforms [[buffer(0)]],
-                         constant Object* objs [[buffer(1)]],
-                         uint2 gid [[thread_position_in_grid]]) {
+                                    constant Uniforms& uniforms [[buffer(0)]],
+                                    constant Object* objs [[buffer(1)]],
+                                    uint2 gid [[thread_position_in_grid]]) {
     
     uint width = outputTexture.get_width();
     uint height = outputTexture.get_height();
@@ -129,35 +141,40 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
         return;
     }
     
-    if (uniforms.currentSample > 10000) {
-        error_write(outputTexture, gid);
-        return;
-    }
+    const int samplesPerFrame = uniforms.sampleCount;
+    
+    float4 accumulatedColor = float4(0.0);
+    
+    for (int sample = 0; sample < samplesPerFrame; sample++) {
+        float2 seed = float2(
+            float(pixelPos.x * 1973 + pixelPos.y * 9277 + (uniforms.currentSample * samplesPerFrame + sample) * 2699) / 65536.0,
+            float(pixelPos.y * 4513 + width * 6389 + (uniforms.currentSample * samplesPerFrame + sample) * 3011) / 65536.0
+        );
         
+        Ray r = getRay(pixelPos.x, pixelPos.y, uniforms, seed);
+        
+        if (length(r.direction) < 1e-6 || isnan(r.direction.x) || isnan(r.direction.y) || isnan(r.direction.z)) {
+            continue; // Skip bad rays
+        }
+        
+        int safeMaxDepth = min(uniforms.maxRayDepth, 10);
+        float4 sampleColor = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth);
+        
+        accumulatedColor += sampleColor;
+    }
+    
+    accumulatedColor /= float(samplesPerFrame);
+    
     float4 existingColor = outputTexture.read(pixelPos);
-
-    float2 seed = float2(
-        float(pixelPos.x * 1973 + pixelPos.y * 9277 + uniforms.currentSample * 2699) / 65536.0,
-        float(pixelPos.y * 4513 + width * 6389 + uniforms.currentSample * 3011) / 65536.0
-    );
+    float4 finalColor;
     
-    Ray r = getRay(pixelPos.x, pixelPos.y, uniforms, seed);
-    
-    if (length(r.direction) < 1e-6 || isnan(r.direction.x) || isnan(r.direction.y) || isnan(r.direction.z)) {
-        error_write(outputTexture, gid);
-        return;
-    }
-    
-    int safeMaxDepth = min(uniforms.maxRayDepth, 10);
-    float4 newSample = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth);
-    
-    float4 accumulatedColor;
     if (uniforms.currentSample == 0) {
-        accumulatedColor = newSample;
+        finalColor = accumulatedColor;
     } else {
-        float weight = 1.0 / float(uniforms.currentSample + 1);
-        accumulatedColor = existingColor * (1.0 - weight) + newSample * weight;
+        float totalSamples = float(uniforms.currentSample * samplesPerFrame + samplesPerFrame);
+        float weight = float(samplesPerFrame) / totalSamples;
+        finalColor = existingColor * (1.0 - weight) + accumulatedColor * weight;
     }
     
-    write_color(outputTexture, pixelPos, accumulatedColor);
+    write_color(outputTexture, pixelPos, finalColor);
 }

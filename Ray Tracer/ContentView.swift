@@ -25,8 +25,8 @@ struct ContentView: View {
                                               height: Int(geometry.size.height))
                         
                         initRayTracing(renderer: renderer, geometry: geometry)
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.5)))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100)))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.5), emission: 1))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100), emission: 0))
                     }
                 
                 // Progress overlay
@@ -101,10 +101,10 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.pixelDeltaY = pixelDeltaY
     renderer.uniforms.cameraCenter = cameraCenter
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
-    renderer.maxIterations = 10
+    renderer.maxIterations = 3
     
-    renderer.uniforms.sampleCount = 5
-    renderer.uniforms.maxRayDepth = 50
+    renderer.uniforms.sampleCount = 1000
+    renderer.uniforms.maxRayDepth = 100
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
 }
 
@@ -266,7 +266,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
             var dummy = Object()
             computeEncoder.setBytes(&dummy, length: MemoryLayout<Object>.stride, index: 1)
         }
-        
+  
         let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
         let threadGroups = MTLSize(
             width: (textureWidth + threadGroupSize.width - 1) / threadGroupSize.width,
@@ -487,18 +487,15 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         
         let tile = tiles[currentTileIndex]
         
-        // Render this tile
         runComputeShaderForTile(tile: tile, sampleIndex: currentSample)
         
         tiles[currentTileIndex].completedSamples += 1
         currentTileIndex += 1
         
-        // Update progress
         let totalWork = tiles.count * maxIterations
         let completedWork = currentSample * tiles.count + currentTileIndex
         renderProgress = Float(completedWork) / Float(totalWork)
         
-        // Force a redraw
         DispatchQueue.main.async {
             self.objectWillChange.send()
         }
@@ -522,13 +519,11 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         computeEncoder.setTexture(texture, index: 0)
             
         var sampleUniforms = uniforms
-        sampleUniforms.sampleCount = 1
         sampleUniforms.currentSample = Int32(sampleIndex)
         sampleUniforms.totalSamples = Int32(maxIterations)
         sampleUniforms.time = time
         sampleUniforms.objCount = Int32(objects.count)
         
-        // Add tile information to uniforms
         sampleUniforms.tileX = Int32(tile.x)
         sampleUniforms.tileY = Int32(tile.y)
         sampleUniforms.tileWidth = Int32(tile.width)

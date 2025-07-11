@@ -120,3 +120,11 @@ float3 random_on_hemisphere(float3 normals, thread float2& seed) {
         return -on_unit_sphere;
     }
 }
+
+float linear_to_gamma(float linear) {
+    if (linear > 0) {
+        return sqrt(linear);
+    }
+    
+    return 0;
+}

@@ -23,6 +23,7 @@ struct Uniforms {
     simd_float2 viewportSize;
     
     int objCount;
+    int lightCount;
     int sampleCount;
     
     int maxRayDepth;
@@ -46,6 +47,11 @@ struct Sphere {
 struct Object {
     int type;
     struct Sphere s; // Only used when Sphere is selected
+    float emission;
+};
+
+struct Material {
+    
 };
 
 #endif /* Definitions_h */
