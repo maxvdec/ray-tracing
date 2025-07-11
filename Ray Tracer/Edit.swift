@@ -47,33 +47,17 @@ extension NumberFormatter {
 
 struct Edit: View {
     @ObservedObject var renderer: MetalRenderer
-    @State private var raysPerPixel: Double = 16 {
-        didSet {
-            renderer.uniforms.sampleCount = Int32(raysPerPixel)
-        }
-    }
-
-    @State private var rayDepth: Double = 10 {
-        didSet {
-            renderer.uniforms.maxRayDepth = Int32(rayDepth)
-        }
-    }
-
-    @State private var renderIterations: Double = 20 {
-        didSet {
-            renderer.maxIterations = Int(renderIterations)
-        }
-    }
-
-    @State private var objects: [SwiftObject] = [] {
-        didSet {
-            renderer.objects = objects.map(\.obj)
-        }
-    }
+    @State private var raysPerPixel: Double = 16
+    @State private var rayDepth: Double = 10
+    @State private var renderIterations: Double = 20
+    @State private var objects: [SwiftObject] = []
 
     init(renderer: MetalRenderer) {
         self.renderer = renderer
         _objects = State(initialValue: renderer.objects.map { SwiftObject.fromObject($0) })
+        _raysPerPixel = State(initialValue: Double(renderer.uniforms.sampleCount))
+        _rayDepth = State(initialValue: Double(renderer.uniforms.maxRayDepth))
+        _renderIterations = State(initialValue: Double(renderer.maxIterations))
     }
 
     var body: some View {
@@ -91,6 +75,10 @@ struct Edit: View {
                     Stepper(value: $raysPerPixel, in: 1 ... 100) {
                         Text("Rays per pixel (\(Int(raysPerPixel)))")
                     }
+                    .onChange(of: raysPerPixel) { newValue in
+                        renderer.updateSampleCount(Int32(newValue))
+                    }
+
                     Slider(value: $raysPerPixel, in: 1 ... 100, step: 1, label: {
                         EmptyView()
                     }, minimumValueLabel: {
@@ -98,11 +86,18 @@ struct Edit: View {
                     }, maximumValueLabel: {
                         Text("100")
                     })
+                    .onChange(of: raysPerPixel) { newValue in
+                        renderer.updateSampleCount(Int32(newValue))
+                    }
                     .padding(.bottom)
 
                     Stepper(value: $rayDepth, in: 1 ... 10) {
                         Text("Max Ray Bounces (\(Int(rayDepth)))")
                     }
+                    .onChange(of: rayDepth) { newValue in
+                        renderer.updateMaxRayDepth(Int32(newValue))
+                    }
+
                     Slider(value: $rayDepth, in: 1 ... 10, step: 1, label: {
                         EmptyView()
                     }, minimumValueLabel: {
@@ -110,11 +105,18 @@ struct Edit: View {
                     }, maximumValueLabel: {
                         Text("10")
                     })
+                    .onChange(of: rayDepth) { newValue in
+                        renderer.updateMaxRayDepth(Int32(newValue))
+                    }
                     .padding(.bottom)
 
                     Stepper(value: $renderIterations, in: 1 ... 200) {
                         Text("Render Passes (\(Int(renderIterations)))")
                     }
+                    .onChange(of: renderIterations) { newValue in
+                        renderer.updateMaxIterations(Int(newValue))
+                    }
+
                     Slider(value: $renderIterations, in: 1 ... 501, step: 1, label: {
                         EmptyView()
                     }, minimumValueLabel: {
@@ -122,19 +124,37 @@ struct Edit: View {
                     }, maximumValueLabel: {
                         Text("∞")
                     })
+                    .onChange(of: renderIterations) { newValue in
+                        renderer.updateMaxIterations(Int(newValue))
+                    }
                     .padding(.bottom)
 
-                    Button {} label: {
+                    Button {
+                        raysPerPixel = 1
+                        rayDepth = 1
+                        renderIterations = 1
+                    } label: {
                         Text("Set to Minimal Values")
                     }.buttonStyle(.bordered).focusable(false)
-                    Button {} label: {
+
+                    Button {
+                        raysPerPixel = 4
+                        rayDepth = 5
+                        renderIterations = 10
+                    } label: {
                         Text("Set to Debug Values")
                     }.buttonStyle(.bordered).focusable(false)
-                    Button {} label: {
+
+                    Button {
+                        raysPerPixel = 64
+                        rayDepth = 10
+                        renderIterations = 100
+                    } label: {
                         Text("Set to Production Values")
                     }.buttonStyle(.bordered).focusable(false)
 
                 }.padding(.horizontal).padding(.bottom)
+
                 HStack {
                     VStack {
                         Text("Objects")
@@ -143,23 +163,42 @@ struct Edit: View {
                     }
                     Spacer()
                 }
+
                 VStack {
                     List {
                         ForEach($objects) { obj in
-                            ObjectView(obj: obj)
-                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            ObjectView(obj: obj) { updatedObj in
+                                // Update the renderer when object changes
+                                if let index = objects.firstIndex(where: { $0.id == updatedObj.id }) {
+                                    objects[index] = updatedObj
+                                    renderer.updateObjects(objects.map(\.obj))
+                                }
+                            }
+                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     .frame(minHeight: 200, maxHeight: 300)
                     .padding(.horizontal)
                 }
+                .onReceive(renderer.$objects) { newObjects in
+                    // Update local objects when renderer objects change
+                    objects = newObjects.map { SwiftObject.fromObject($0) }
+                }
 
                 Spacer()
             }
-
-        }.padding()
-            .frame(width: 300)
+        }
+        .padding()
+        .frame(width: 300)
+        .onReceive(renderer.$uniforms) { newUniforms in
+            // Update local state when renderer uniforms change
+            raysPerPixel = Double(newUniforms.sampleCount)
+            rayDepth = Double(newUniforms.maxRayDepth)
+        }
+        .onReceive(renderer.$maxIterations) { newMaxIterations in
+            renderIterations = Double(newMaxIterations)
+        }
     }
 }
 
@@ -185,17 +224,15 @@ extension SIMD4 {
 
 struct ObjectView: View {
     @Binding var obj: SwiftObject
+    let onObjectChanged: (SwiftObject) -> Void
+
     @State private var isShapeExpanded: Bool = true
     @State private var isMaterialExpanded: Bool = true
+    @State private var albedo: Color = .blue
 
-    @State private var albedo: Color = .blue {
-        didSet {
-            obj.obj.mat.albedo = SIMD4<Float>.fromColor(albedo)
-        }
-    }
-
-    init(obj: Binding<SwiftObject>) {
+    init(obj: Binding<SwiftObject>, onObjectChanged: @escaping (SwiftObject) -> Void) {
         self._obj = obj
+        self.onObjectChanged = onObjectChanged
         self._albedo = State(initialValue: Color.fromSIMD(obj.obj.mat.albedo.wrappedValue))
     }
 
@@ -227,7 +264,6 @@ struct ObjectView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     switch obj.type {
                     case .sphere:
-                        // The center
                         Text("Center:")
                             .bold().foregroundStyle(.secondary)
                         HStack {
@@ -236,16 +272,25 @@ struct ObjectView: View {
                             TextField("x:", value: $obj.obj.s.center.x, formatter: NumberFormatter())
                                 .padding(.horizontal, 4)
                                 .textFieldStyle(.squareBorder)
+                                .onChange(of: obj.obj.s.center.x) {
+                                    onObjectChanged(obj)
+                                }
                             Text("y:")
                                 .padding(.trailing, -5)
                             TextField("y:", value: $obj.obj.s.center.y, formatter: NumberFormatter())
                                 .padding(.horizontal, 4)
                                 .textFieldStyle(.squareBorder)
+                                .onChange(of: obj.obj.s.center.y) {
+                                    onObjectChanged(obj)
+                                }
                             Text("z:")
                                 .padding(.trailing, -5)
                             TextField("z:", value: $obj.obj.s.center.z, formatter: NumberFormatter())
                                 .padding(.horizontal, 4)
                                 .textFieldStyle(.squareBorder)
+                                .onChange(of: obj.obj.s.center.z) {
+                                    onObjectChanged(obj)
+                                }
                         }.padding(4)
 
                         Text("Radius:")
@@ -253,6 +298,9 @@ struct ObjectView: View {
                         TextField("", value: $obj.obj.s.radius, formatter: NumberFormatter.makeFloatFormatter())
                             .padding(.bottom, 4)
                             .textFieldStyle(.squareBorder)
+                            .onChange(of: obj.obj.s.radius) {
+                                onObjectChanged(obj)
+                            }
                     case .null:
                         Text("Unknown properties")
                     }
@@ -289,20 +337,31 @@ struct ObjectView: View {
                     TextField("", value: $obj.obj.mat.emission, formatter: NumberFormatter.makeFloatFormatter())
                         .padding(.bottom, 4)
                         .textFieldStyle(.squareBorder)
+                        .onChange(of: obj.obj.mat.emission) { _ in
+                            onObjectChanged(obj)
+                        }
                     Text("Color (Albedo):")
                         .bold()
                         .foregroundStyle(.secondary)
                     ColorPicker("", selection: $albedo)
                         .labelsHidden()
+                        .onChange(of: albedo) { newColor in
+                            obj.obj.mat.albedo = SIMD4<Float>.fromColor(newColor)
+                            onObjectChanged(obj)
+                        }
                 }
                 .padding(.leading, 16)
                 .padding(.top, 4)
             }
-
-        }.padding(10).background(
+        }
+        .padding(10)
+        .background(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.black, lineWidth: 1)
         )
+        .onAppear {
+            albedo = Color.fromSIMD(obj.obj.mat.albedo)
+        }
     }
 }
 

@@ -91,7 +91,7 @@ float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& s
             r.direction = normalize(direction);
             r.distance = {0.001, INFINITY};
             
-            float3 albedo = float3(0.7, 0.7, 0.7);
+            float3 albedo = hitObject.mat.albedo.xyz;
             accumulatedColor *= albedo;
         } else {
             break;

@@ -13,8 +13,9 @@ import MetalKit
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject var renderer = MetalRenderer()
+    @ObservedObject var renderer: MetalRenderer
     @State private var isRendering = false
+    @State private var showSettings = true
     
     var body: some View {
         GeometryReader { geometry in
@@ -25,55 +26,63 @@ struct ContentView: View {
                                               height: Int(geometry.size.height))
                         
                         initRayTracing(renderer: renderer, geometry: geometry)
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, 2), radius: 3), mat: Material(emission: 1, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, 0), radius: 0.2), mat: Material(emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100, -1), radius: 100), mat: Material(emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, 3), radius: 1), mat: Material(emission: 10, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.2), mat: Material(emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100), mat: Material(emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
                     }
-                
-                // Progress overlay
-                VStack {
-                    Spacer()
-                    HStack {
-                        if isRendering {
-                            VStack {
-                                Text("Rendering: \(Int(renderer.renderProgress * 100))%")
-                                    .foregroundColor(.white)
+                Button {
+                    showSettings.toggle()
+                } label: {}.hidden().keyboardShortcut("h", modifiers: [])
+                if showSettings {
+                    // Progress overlay
+                    VStack {
+                        Spacer()
+                        HStack {
+                            if isRendering {
+                                VStack {
+                                    Text("Rendering: \(Int(renderer.renderProgress * 100))%")
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 8)
+                                        .cornerRadius(8)
+                                        .glassEffect()
+                                    
+                                    Text("Tile: \(renderer.currentTile + 1)/\(renderer.totalTiles)")
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 4)
+                                        .cornerRadius(8)
+                                        .glassEffect()
+                                    
+                                    Button("Stop") {
+                                        renderer.stopProgressiveRender()
+                                        isRendering = false
+                                    }.buttonStyle(.borderless)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 8)
+                                        .foregroundColor(.white)
+                                        .cornerRadius(8)
+                                        .glassEffect()
+                                        .focusable(false)
+                                        .keyboardShortcut(" ", modifiers: [])
+                                }
+                            } else {
+                                Button("Start Render") {
+                                    renderer.startProgressiveRender()
+                                    isRendering = true
+                                }.buttonStyle(.borderless)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 8)
-                                    .background(Color.black.opacity(0.7))
-                                    .cornerRadius(8)
-                                
-                                Text("Tile: \(renderer.currentTile + 1)/\(renderer.totalTiles)")
                                     .foregroundColor(.white)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 4)
-                                    .background(Color.black.opacity(0.7))
                                     .cornerRadius(8)
-                                
-                                Button("Stop") {
-                                    renderer.stopProgressiveRender()
-                                    isRendering = false
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .background(Color.red)
-                                .foregroundColor(.white)
-                                .cornerRadius(8)
+                                    .focusable(false)
+                                    .glassEffect().keyboardShortcut(" ", modifiers: [])
                             }
-                        } else {
-                            Button("Start Render") {
-                                renderer.startProgressiveRender()
-                                isRendering = true
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
+                    
+                            Spacer()
                         }
-                        Spacer()
+                        .padding()
                     }
-                    .padding()
                 }
             }
         }
@@ -127,40 +136,87 @@ struct MetalView: NSViewRepresentable {
 }
 
 class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
-    let objectWillChange = ObservableObjectPublisher()
-    
     var device: MTLDevice!
     var commandQueue: MTLCommandQueue!
     var texture: MTLTexture?
     var renderPipelineState: MTLRenderPipelineState!
-    
     var computePipelineState: MTLComputePipelineState?
-    
-    var objects: [Object] = []
-    
-    public var uniforms: Uniforms = .init()
-    
+        
+    @Published var objects: [Object] = [] {
+        didSet {
+            // Trigger UI update when objects change
+            DispatchQueue.main.async {
+                self.objectWillChange.send()
+            }
+        }
+    }
+        
+    @Published var uniforms: Uniforms = .init() {
+        didSet {
+            // Trigger UI update when uniforms change
+            DispatchQueue.main.async {
+                self.objectWillChange.send()
+            }
+        }
+    }
+        
     private var pixelData: [SIMD4<Float>] = []
     private var textureWidth: Int = 0
     private var textureHeight: Int = 0
     private var needsUpdate = false
-    
+        
     private var time: Float = 0.0
-    
+        
     // Tile-based rendering properties
     private var isRendering = false
-    var renderProgress: Float = 0.0
+    @Published var renderProgress: Float = 0.0
     private var currentSample = 0
-    var maxIterations = 3
+    @Published var maxIterations = 3 {
+        didSet {
+            DispatchQueue.main.async {
+                self.objectWillChange.send()
+            }
+        }
+    }
+
     private var renderTimer: Timer?
-    
+        
     // Tile management
-    private let tileSize = 64 // 64x64 pixel tiles
+    private let tileSize = 64
     private var tiles: [TileInfo] = []
     private var currentTileIndex = 0
-    var currentTile: Int { currentTileIndex }
-    var totalTiles: Int { tiles.count }
+    @Published var currentTile: Int = 0
+    @Published var totalTiles: Int = 0
     
+    func updateSampleCount(_ count: Int32) {
+        uniforms.sampleCount = count
+        uniforms.pixelSampleScale = 1.0 / Float(count)
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
+        }
+    }
+        
+    func updateMaxRayDepth(_ depth: Int32) {
+        uniforms.maxRayDepth = depth
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
+        }
+    }
+        
+    func updateMaxIterations(_ iterations: Int) {
+        maxIterations = iterations
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
+        }
+    }
+        
+    func updateObjects(_ newObjects: [Object]) {
+        objects = newObjects
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
+        }
+    }
+        
     // Tile structure
     struct TileInfo {
         let x: Int
@@ -229,19 +285,24 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     
     private func generateTiles() {
         tiles.removeAll()
-        
+           
         let tilesX = (textureWidth + tileSize - 1) / tileSize
         let tilesY = (textureHeight + tileSize - 1) / tileSize
-        
+           
         for y in 0..<tilesY {
             for x in 0..<tilesX {
                 let tileX = x * tileSize
                 let tileY = y * tileSize
                 let tileWidth = min(tileSize, textureWidth - tileX)
                 let tileHeight = min(tileSize, textureHeight - tileY)
-                
+                   
                 tiles.append(TileInfo(x: tileX, y: tileY, width: tileWidth, height: tileHeight))
             }
+        }
+           
+        DispatchQueue.main.async {
+            self.totalTiles = self.tiles.count
+            self.objectWillChange.send()
         }
     }
     
@@ -478,26 +539,27 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
                 stopProgressiveRender()
                 return
             }
-            
+                
             currentTileIndex = 0
             for i in 0..<tiles.count {
                 tiles[i].completedSamples = 0
             }
             return
         }
-        
+            
         let tile = tiles[currentTileIndex]
-        
+            
         runComputeShaderForTile(tile: tile, sampleIndex: currentSample)
-        
+            
         tiles[currentTileIndex].completedSamples += 1
         currentTileIndex += 1
-        
+            
         let totalWork = tiles.count * maxIterations
         let completedWork = currentSample * tiles.count + currentTileIndex
-        renderProgress = Float(completedWork) / Float(totalWork)
-        
+            
         DispatchQueue.main.async {
+            self.renderProgress = Float(completedWork) / Float(totalWork)
+            self.currentTile = self.currentTileIndex - 1
             self.objectWillChange.send()
         }
     }
@@ -534,6 +596,8 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
             
         if objects.count != 0 {
             computeEncoder.setBytes(&objects, length: MemoryLayout<Object>.stride * objects.count, index: 1)
+            print("COUNT: \(objects.count)")
+            print(objects)
         } else {
             var dummy = Object()
             computeEncoder.setBytes(&dummy, length: MemoryLayout<Object>.stride, index: 1)
