@@ -35,6 +35,8 @@ struct Uniforms {
     int tileY;
     int tileWidth;
     int tileHeight;
+    
+    simd_float4 globalIllumation;
 };
 
 struct Sphere {
@@ -45,10 +47,13 @@ struct Sphere {
 #define LAMBIERTIAN 0
 #define REFLECTEE 1
 
-struct Material {
+struct MeshMaterial {
     int type;
     float emission;
     simd_float4 albedo;
+    simd_float4 emission_color;
+    
+    float reflection_fuzz;
 };
 
 #define TYPE_SPHERE 0
@@ -56,7 +61,7 @@ struct Material {
 struct Object {
     int type;
     struct Sphere s; // Only used when Sphere is selected
-    struct Material mat;
+    struct MeshMaterial mat;
 };
 
 

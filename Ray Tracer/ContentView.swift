@@ -12,6 +12,34 @@ import Metal
 import MetalKit
 import SwiftUI
 
+struct SwiftMaterial {
+    var type: MaterialType = .lambertian
+    var emission: Float = 0.0
+    var albedo: SIMD4<Float> = .init(1, 1, 1, 1)
+    var emission_color: SIMD4<Float> = .init(0, 0, 0, 1)
+    var reflection_fuzz: Float = 0.0
+    
+    func toMaterial() -> MeshMaterial {
+        return MeshMaterial(type: type.rawValue, emission: emission, albedo: albedo, emission_color: emission_color, reflection_fuzz: reflection_fuzz)
+    }
+    
+    init(color: SIMD4<Float>) {
+        self.albedo = color
+    }
+    
+    init(type: MaterialType = .lambertian, emission: Float = 0.0, albedo: SIMD4<Float> = .init(1, 1, 1, 1), emission_color: SIMD4<Float> = .init(0, 0, 0, 1), reflection_fuzz: Float = 0.0) {
+        self.type = type
+        self.emission = emission
+        self.albedo = albedo
+        self.emission_color = emission_color
+        self.reflection_fuzz = reflection_fuzz
+    }
+    
+    static func light(strength: Float, color: SIMD4<Float> = .init(1, 1, 1, 1)) -> SwiftMaterial {
+        return SwiftMaterial(type: .lambertian, emission: strength, albedo: .init(1, 1, 1, 1), emission_color: color)
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var renderer: MetalRenderer
     @State private var isRendering = false
@@ -26,9 +54,17 @@ struct ContentView: View {
                                               height: Int(geometry.size.height))
                         
                         initRayTracing(renderer: renderer, geometry: geometry)
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, 3), radius: 1), mat: Material(type: 0, emission: 10, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.2), mat: Material(type: 0, emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100), mat: Material(type: 0, emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        let material_ground = SwiftMaterial(color: [0.8, 0.8, 0.0, 1.0]).toMaterial()
+                        let material_center = SwiftMaterial(color: [0.1, 0.2, 0.5, 1.0]).toMaterial()
+                        let material_left = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.8, 0.8, 1.0]).toMaterial()
+                        let material_right = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.6, 0.2, 1.0]).toMaterial()
+                        
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: [0, -100.5, -1.0], radius: 100.0), mat: material_ground))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: [0.0, 0.0, -1.2], radius: 0.5), mat: material_center))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: [-1, 0.0, -1], radius: 0.5), mat: material_left))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: [1, 0.0, -1], radius: 0.5), mat: material_right))
+                        
+                        renderer.uniforms.globalIllumation = [0.53, 0.81, 0.92, 1.0];
                     }
                 Button {
                     showSettings.toggle()
@@ -111,9 +147,9 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.pixelDeltaY = pixelDeltaY
     renderer.uniforms.cameraCenter = cameraCenter
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
-    renderer.maxIterations = 30
+    renderer.maxIterations = 5
     
-    renderer.uniforms.sampleCount = 64
+    renderer.uniforms.sampleCount = 32
     renderer.uniforms.maxRayDepth = 10
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
 }

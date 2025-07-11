@@ -63,9 +63,9 @@ bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread Hit
     return hit_anything;
 }
 
-float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& seed, int maxDepth) {
-    float3 accumulatedColor = float3(1.0, 1.0, 1.0);
-    float3 finalColor = float3(0.0);
+float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& seed, int maxDepth, float4 baseSkyColor) {
+    float4 accumulatedColor = float4(1.0, 1.0, 1.0, 1.0);
+    float4 finalColor = float4(0.0);
     
     for (int depth = 0; depth < maxDepth; ++depth) {
         r.distance = {0.001, MAXFLOAT};
@@ -77,28 +77,30 @@ float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& s
             Object hitObject = objs[hitObjectIndex];
             
             if (hitObject.mat.emission > 0.0) {
-                float3 emissionColor = float3(hitObject.mat.emission);
+                float4 emissionColor = hitObject.mat.emission;
                 finalColor += accumulatedColor * emissionColor;
                 break;
             }
-
-            float3 direction = info.normal + random_unit_vec(seed);
-            if (length(direction) < 1e-6) {
-                direction = info.normal;
-            }
-
-            r.origin = info.point;
-            r.direction = normalize(direction);
-            r.distance = {0.001, INFINITY};
             
-            float3 albedo = hitObject.mat.albedo.xyz;
-            accumulatedColor *= albedo;
+            Ray scattered;
+            
+            float4 attenuation;
+            if (materialScatters(hitObject.mat, r, info, attenuation, scattered, seed)) {
+                accumulatedColor *= attenuation;
+                r = scattered;
+            } else {
+                break;
+            }
         } else {
+            float t = 0.5f * (normalize(r.direction).y + 1.0f);
+            float4 skyColor = (1.0f - t) * float4(1.0f, 1.0f, 1.0f, 1.0f) + t * baseSkyColor;
+            finalColor += accumulatedColor * skyColor;
             break;
+            
         }
     }
 
-    return float4(finalColor, 1.0);
+    return finalColor;
 }
 
 
@@ -166,7 +168,7 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
         }
         
         int safeMaxDepth = min(uniforms.maxRayDepth, 10);
-        float4 rayColor = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth);
+        float4 rayColor = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth, uniforms.globalIllumation);
         
         rayColor.rgb = clamp(rayColor.rgb, 0.0, 10.0);
         

@@ -609,9 +609,3 @@ extension Color {
         #endif
     }
 }
-
-#Preview {
-    let renderer = MetalRenderer()
-    renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0.0, 5.0, 0.0), radius: 0.5), mat: Material(emission: 1, albedo: SIMD4<Float>(1.0, 0.0, 0.0, 1.0))))
-    return Edit(renderer: renderer)
-}

@@ -134,7 +134,7 @@ bool isVecNearZero(float3 vec) {
     return (fabs(vec.x) < s) && (fabs(vec.y) < s) && (fabs(vec.z) < s);
 }
 
-bool lambertianScatter(Material m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
+bool lambertianScatter(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
     auto scatter_direction = hit.normal + random_unit_vec(seed);
     
     if (isVecNearZero(scatter_direction)) {
@@ -146,14 +146,15 @@ bool lambertianScatter(Material m, Ray r, HitInfo hit, thread float4& attenuatio
     return true;
 }
 
-bool metalScatter(Material m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
+bool metalScatter(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
     float3 reflected = reflect(r.direction, hit.normal);
-    scattered = {hit.point, reflected};
+    float3 fuzzed = normalize(reflected + m.reflection_fuzz * random_unit_vec(seed));
+    scattered = { hit.point, fuzzed };
     attenuation = m.albedo;
-    return true;
+    return dot(scattered.direction, hit.normal) > 0.0;
 }
 
-bool materialScatters(Material m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
+bool materialScatters(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
     if (m.type == LAMBIERTIAN) {
         return lambertianScatter(m, r, hit, attenuation, scattered, seed);
     } else if (m.type == REFLECTEE) {
