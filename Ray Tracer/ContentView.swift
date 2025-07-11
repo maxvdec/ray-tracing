@@ -596,8 +596,6 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
             
         if objects.count != 0 {
             computeEncoder.setBytes(&objects, length: MemoryLayout<Object>.stride * objects.count, index: 1)
-            print("COUNT: \(objects.count)")
-            print(objects)
         } else {
             var dummy = Object()
             computeEncoder.setBytes(&dummy, length: MemoryLayout<Object>.stride, index: 1)
