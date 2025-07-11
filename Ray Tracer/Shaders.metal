@@ -42,7 +42,7 @@ bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
     return true;
 }
 
-bool world_hit(constant Object* objs, int objectCount, Ray r, thread HitInfo& hit) {
+bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread HitInfo& hit) {
     HitInfo temp_hit;
     bool hit_anything = false;
     auto closest_so_far = r.distance.max;
@@ -54,6 +54,7 @@ bool world_hit(constant Object* objs, int objectCount, Ray r, thread HitInfo& hi
                 hit_anything = true;
                 closest_so_far = temp_hit.distance;
                 hit = temp_hit;
+                r.distance.max = closest_so_far;
             }
         }
     }
@@ -61,7 +62,7 @@ bool world_hit(constant Object* objs, int objectCount, Ray r, thread HitInfo& hi
     return hit_anything;
 }
 
-float4 color_ray(constant Object *objs, int objectCount, Ray r, thread float2& seed, int depth) {
+float4 color_ray(constant Object *objs, int objectCount, thread Ray& r, thread float2& seed, int depth) {
     if (depth <= 0) {
         return float4(0, 0, 0, 1);
     }
@@ -82,7 +83,7 @@ float4 color_ray(constant Object *objs, int objectCount, Ray r, thread float2& s
     return float4(result, 1.0);
 }
 
-void write_color(texture2d<float, access::write> texture, uint2 pos, float4 color) {
+void write_color(texture2d<float, access::read_write> texture, uint2 pos, float4 color) {
     Interval i = {0, 1};
     float r = i.clamp(color.r);
     float g = i.clamp(color.g);
@@ -92,7 +93,8 @@ void write_color(texture2d<float, access::write> texture, uint2 pos, float4 colo
     texture.write(result, pos);
 }
 
-kernel void computeShader(texture2d<float, access::write> outputTexture [[texture(0)]],
+
+kernel void computeShader(texture2d<float, access::read_write> outputTexture [[texture(0)]],
                          constant Uniforms& uniforms [[buffer(0)]],
                          constant Object* objs [[buffer(1)]],
                          uint2 gid [[thread_position_in_grid]]) {
@@ -106,19 +108,23 @@ kernel void computeShader(texture2d<float, access::write> outputTexture [[textur
     
     float2 pixel = float2(gid.x, gid.y);
     
-    float4 color = float4(0, 0, 0, 1.0);
+    float4 existingColor = outputTexture.read(gid);
     
     float2 seed = float2(
-        float(gid.x) * 12.9898 + float(gid.y) * 78.233 + float(height) * 37.719,
+        float(gid.x) * 12.9898 + float(gid.y) * 78.233 + float(uniforms.currentSample) * 37.719,
         float(gid.y) * 39.346 + float(width) * 11.135 + uniforms.time * 0.1
     );
     
-    for (int sample = 0; sample < uniforms.sampleCount; ++sample) {
-        Ray r = getRay(pixel.x, pixel.y, uniforms, seed);
-        color += color_ray(objs, uniforms.objCount, r, seed, uniforms.maxRayDepth);
+    Ray r = getRay(gid.x, gid.y, uniforms, seed);
+    float4 newSample = color_ray(objs, uniforms.objCount, r, seed, uniforms.maxRayDepth);
+    
+    float4 accumulatedColor;
+    if (uniforms.currentSample == 0) {
+        accumulatedColor = newSample;
+    } else {
+        float weight = 1.0 / float(uniforms.currentSample + 1);
+        accumulatedColor = existingColor * (1.0 - weight) + newSample * weight;
     }
     
-    color *= uniforms.pixelSampleScale;
-    
-    write_color(outputTexture, gid, color);
+    write_color(outputTexture, gid, accumulatedColor);
 }

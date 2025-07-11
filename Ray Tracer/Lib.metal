@@ -22,7 +22,7 @@ struct Interval {
     }
     
     bool surrounds(float x) {
-        return min < x && max > x;
+        return min < x && x < max;
     }
     
     float clamp(float x) {
@@ -86,7 +86,9 @@ float3 random_vec_clamped(Interval interval, thread float2& seed) {
 }
 
 float3 random_unit_vec(thread float2& seed) {
-    while (true) {
+    int maximum = 100;
+    int i = 0;
+    while (i < maximum) {
         float3 p = float3(
             random_double(seed) * 2.0 - 1.0,
             random_double(seed) * 2.0 - 1.0,
@@ -97,7 +99,10 @@ float3 random_unit_vec(thread float2& seed) {
         if (len_sq >= 1e-30 && len_sq <= 1.0) {
             return p / sqrt(len_sq);
         }
+        ++i;
     }
+    
+    return float3(1.0, 1.0, 1.0);
 }
 
 float3 random_on_hemisphere(float3 normals, thread float2& seed) {

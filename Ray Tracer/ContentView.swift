@@ -13,20 +13,60 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject var renderer = MetalRenderer()
+    @State private var isRendering = false
     
     var body: some View {
         GeometryReader { geometry in
-            MetalView(renderer: renderer)
-                .onAppear {
-                    renderer.setupTexture(width: Int(geometry.size.width),
-                                          height: Int(geometry.size.height))
-                    
-                    initRayTracing(renderer: renderer, geometry: geometry)
-                    renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.5)))
-                    renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100)))
-                    
-                    renderer.runComputeShader()
+            ZStack {
+                MetalView(renderer: renderer)
+                    .onAppear {
+                        renderer.setupTexture(width: Int(geometry.size.width),
+                                              height: Int(geometry.size.height))
+                        
+                        initRayTracing(renderer: renderer, geometry: geometry)
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.5)))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100)))
+                    }
+                
+                // Progress overlay
+                VStack {
+                    Spacer()
+                    HStack {
+                        if isRendering {
+                            VStack {
+                                Text("Rendering: \(Int(renderer.renderProgress * 100))%")
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(Color.black.opacity(0.7))
+                                    .cornerRadius(8)
+                                
+                                Button("Stop") {
+                                    renderer.stopProgressiveRender()
+                                    isRendering = false
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Color.red)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                            }
+                        } else {
+                            Button("Start Render") {
+                                renderer.startProgressiveRender()
+                                isRendering = true
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                        Spacer()
+                    }
+                    .padding()
                 }
+            }
         }
         .ignoresSafeArea()
     }
@@ -54,8 +94,8 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.cameraCenter = cameraCenter
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
     
-    renderer.uniforms.sampleCount = 100
-    renderer.uniforms.maxRayDepth = 50
+    renderer.uniforms.sampleCount = 1
+    renderer.uniforms.maxRayDepth = 10
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
 }
 
@@ -97,6 +137,12 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     
     private var time: Float = 0.0
     
+    private var isRendering = false
+    var renderProgress: Float = 0.0
+    private var currentSample = 0
+    private var maxSamples = 100
+    private var renderTimer: Timer?
+    
     override init() {
         super.init()
         setupMetal()
@@ -136,7 +182,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         textureWidth = width
         textureHeight = height
         
-        pixelData = Array(repeating: SIMD4<Float>(0.0, 0.0, 1.0, 1.0), count: width * height)
+        pixelData = Array(repeating: SIMD4<Float>(0.0, 0.0, 0.0, 1.0), count: width * height)
         
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba32Float,
@@ -164,7 +210,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         
         uniforms.time = time
         uniforms.objCount = Int32(objects.count)
-        
+       
         computeEncoder.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         if objects.count != 0 {
             computeEncoder.setBytes(&objects, length: MemoryLayout<Object>.stride * objects.count, index: 1)
@@ -185,8 +231,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
         
-        // Update time for next frame
-        time += 0.016 // ~60 FPS
+        time += 0.016
     }
     
     /// Run compute shader with custom parameters
@@ -202,11 +247,17 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         computeEncoder.setComputePipelineState(computePipelineState)
         computeEncoder.setTexture(texture, index: 0)
         
-        // Pass custom time parameter
-        var timeBuffer = time
-        computeEncoder.setBytes(&timeBuffer, length: MemoryLayout<Float>.size, index: 0)
+        uniforms.time = time
+        uniforms.objCount = Int32(objects.count)
+       
+        computeEncoder.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+        if objects.count != 0 {
+            computeEncoder.setBytes(&objects, length: MemoryLayout<Object>.stride * objects.count, index: 1)
+        } else {
+            var dummy = Object()
+            computeEncoder.setBytes(&dummy, length: MemoryLayout<Object>.stride, index: 1)
+        }
         
-        // Calculate thread group size
         let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
         let threadGroups = MTLSize(
             width: (textureWidth + threadGroupSize.width - 1) / threadGroupSize.width,
@@ -340,5 +391,89 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         renderEncoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+    
+    func startProgressiveRender() {
+        guard !isRendering else { return }
+        
+        isRendering = true
+        currentSample = 0
+        renderProgress = 0.0
+        
+        clearTexture()
+        
+        renderTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { _ in
+            self.renderSample()
+        }
+    }
+    
+    func stopProgressiveRender() {
+        renderTimer?.invalidate()
+        renderTimer = nil
+        isRendering = false
+    }
+       
+    private func renderSample() {
+        guard currentSample < maxSamples else {
+            stopProgressiveRender()
+            return
+        }
+           
+        // Run compute shader for one sample
+        runComputeShaderSample(sampleIndex: currentSample)
+           
+        currentSample += 1
+        renderProgress = Float(currentSample) / Float(maxSamples)
+           
+        // Force a redraw
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
+        }
+    }
+    
+    private func clearTexture() {
+        fillTexture(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0)
+        updateTexture()
+    }
+    
+    func runComputeShaderSample(sampleIndex: Int) {
+        guard let texture = texture,
+              let computePipelineState = computePipelineState,
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let computeEncoder = commandBuffer.makeComputeCommandEncoder()
+        else {
+            return
+        }
+            
+        computeEncoder.setComputePipelineState(computePipelineState)
+        computeEncoder.setTexture(texture, index: 0)
+            
+        var sampleUniforms = uniforms
+        sampleUniforms.sampleCount = 1
+        sampleUniforms.currentSample = Int32(sampleIndex)
+        sampleUniforms.totalSamples = Int32(maxSamples)
+        sampleUniforms.time = time
+        sampleUniforms.objCount = Int32(objects.count)
+            
+        computeEncoder.setBytes(&sampleUniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+            
+        if objects.count != 0 {
+            computeEncoder.setBytes(&objects, length: MemoryLayout<Object>.stride * objects.count, index: 1)
+        } else {
+            var dummy = Object()
+            computeEncoder.setBytes(&dummy, length: MemoryLayout<Object>.stride, index: 1)
+        }
+            
+        let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
+        let threadGroups = MTLSize(
+            width: (textureWidth + threadGroupSize.width - 1) / threadGroupSize.width,
+            height: (textureHeight + threadGroupSize.height - 1) / threadGroupSize.height,
+            depth: 1
+        )
+            
+        computeEncoder.dispatchThreadgroups(threadGroups, threadsPerThreadgroup: threadGroupSize)
+        computeEncoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
     }
 }
