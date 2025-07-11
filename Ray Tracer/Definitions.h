@@ -44,14 +44,16 @@ struct Sphere {
 
 #define TYPE_SPHERE 0
 
+struct Material {
+    float emission;
+    simd_float4 albedo;
+};
+
 struct Object {
     int type;
     struct Sphere s; // Only used when Sphere is selected
-    float emission;
+    struct Material mat;
 };
 
-struct Material {
-    
-};
 
 #endif /* Definitions_h */

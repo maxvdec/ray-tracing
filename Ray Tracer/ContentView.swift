@@ -25,9 +25,9 @@ struct ContentView: View {
                                               height: Int(geometry.size.height))
                         
                         initRayTracing(renderer: renderer, geometry: geometry)
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, -1), radius: 0.2), emission: 1))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(-1, 0, -1), radius: 0.2), emission: 0))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100.5, -1), radius: 100), emission: 0))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, 2), radius: 3), mat: Material(emission: 1, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, 0, 0), radius: 0.2), mat: Material(emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
+                        renderer.objects.append(Object(type: 0, s: Sphere(center: SIMD3<Float>(0, -100, -1), radius: 100), mat: Material(emission: 0, albedo: SIMD4<Float>(0.5, 0.5, 0.5, 1))))
                     }
                 
                 // Progress overlay
@@ -102,9 +102,9 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.pixelDeltaY = pixelDeltaY
     renderer.uniforms.cameraCenter = cameraCenter
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
-    renderer.maxIterations = 20
+    renderer.maxIterations = 30
     
-    renderer.uniforms.sampleCount = 32
+    renderer.uniforms.sampleCount = 64
     renderer.uniforms.maxRayDepth = 10
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
 }
@@ -472,13 +472,13 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
        
     private func renderTile() {
         guard currentTileIndex < tiles.count else {
-            // All tiles for current sample completed
             currentSample += 1
-            if currentSample >= maxIterations {
+            if maxIterations > 500 {
+            } else if currentSample >= maxIterations {
                 stopProgressiveRender()
                 return
             }
-            // Start next sample
+            
             currentTileIndex = 0
             for i in 0..<tiles.count {
                 tiles[i].completedSamples = 0

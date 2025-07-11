@@ -76,8 +76,8 @@ float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& s
         if (world_hit(objs, objectCount, r, info, hitObjectIndex)) {
             Object hitObject = objs[hitObjectIndex];
             
-            if (hitObject.emission > 0.0) {
-                float3 emissionColor = float3(hitObject.emission);
+            if (hitObject.mat.emission > 0.0) {
+                float3 emissionColor = float3(hitObject.mat.emission);
                 finalColor += accumulatedColor * emissionColor;
                 break;
             }
