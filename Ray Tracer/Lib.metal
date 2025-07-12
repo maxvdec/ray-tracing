@@ -78,14 +78,30 @@ float3 random_square(thread float2& seed) {
     return float3(x, y, 0.0);
 }
 
+float3 random_in_unit_disk(thread float2& seed) {
+    float x, y;
+    do {
+        x = 2.0 * random_double(seed) - 1.0;
+        y = 2.0 * random_double(seed) - 1.0;
+    } while (x * x + y * y >= 1.0);
+    
+    return float3(x, y, 0.0);
+}
+
+float3 defocusDiskSample(Uniforms uniforms, thread float2& seed) {
+    auto p = random_in_unit_disk(seed);
+    return uniforms.cameraCenter + (p.x * uniforms.defocusDiskU) + (p.y * uniforms.defocusDiskV);
+}
+
 Ray getRay(int i, int j, Uniforms uniforms, thread float2& seed) {
     float3 offset = random_square(seed);
     auto pixel_sample = uniforms.pixelOrigin + ((i + offset.x) * uniforms.pixelDeltaX) + ((j + offset.y) * uniforms.pixelDeltaY);
-    auto ray_origin = uniforms.cameraCenter;
+    auto ray_origin = (uniforms.defocusAngle <= 0) ? uniforms.cameraCenter : defocusDiskSample(uniforms, seed);
     auto ray_dir = normalize(pixel_sample - ray_origin);
     
     return {ray_dir, ray_origin};
 }
+
 
 float3 random_vector(thread float2& seed) {
     return float3(random_double(seed), random_double(seed), random_double(seed));
@@ -111,6 +127,7 @@ float3 random_unit_vec(thread float2& seed) {
         1.0 - 2.0 * w
     );
 }
+
 
 float3 random_on_hemisphere(float3 normals, thread float2& seed) {
     float3 on_unit_sphere = random_unit_vec(seed);
@@ -154,11 +171,39 @@ bool metalScatter(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenuation
     return dot(scattered.direction, hit.normal) > 0;
 }
 
+float reflectance(float cosine, float refraction_index) {
+    auto r0 = (1 - refraction_index) / (1 + refraction_index);
+    r0 = r0 * r0;
+    return r0 + (1 - r0) * pow(1 - cosine, 5);
+}
+
+bool dielectricScatter(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
+    attenuation = float4(1.0, 1.0, 1.0, 1.0);
+    float ri = hit.hit_front ? (1.0 / m.refraction_index) : m.refraction_index;
+    float3 unit_dir = normalize(r.direction);
+    float cos_theta = fmin(dot(-unit_dir, hit.normal), 1.0);
+    float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+    
+    bool cannot_refract = ri * sin_theta > 1.0;
+    float3 direction;
+    
+    if (cannot_refract || reflectance(cos_theta, ri) > random_double(seed)) {
+        direction = reflect(unit_dir, hit.normal);
+    } else {
+        direction = refract(unit_dir, hit.normal, ri);
+    }
+    
+    scattered = { direction, hit.point };
+    return true;
+}
+
 bool materialScatters(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenuation, thread Ray& scattered, thread float2& seed) {
     if (m.type == LAMBIERTIAN) {
         return lambertianScatter(m, r, hit, attenuation, scattered, seed);
     } else if (m.type == REFLECTEE) {
         return metalScatter(m, r, hit, attenuation, scattered, seed);
+    } else if (m.type == DIELECTRIC) {
+        return dielectricScatter(m, r, hit, attenuation, scattered, seed);
     } else {
         return false;
     }

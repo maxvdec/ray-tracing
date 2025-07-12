@@ -21,6 +21,9 @@ struct Uniforms {
     
     simd_float3 cameraCenter;
     simd_float2 viewportSize;
+    simd_float3 defocusDiskU;
+    simd_float3 defocusDiskV;
+    float defocusAngle;
     
     int objCount;
     int lightCount;
@@ -46,6 +49,7 @@ struct Sphere {
 
 #define LAMBIERTIAN 0
 #define REFLECTEE 1
+#define DIELECTRIC 2
 
 struct MeshMaterial {
     int type;
@@ -54,6 +58,7 @@ struct MeshMaterial {
     simd_float4 emission_color;
     
     float reflection_fuzz;
+    float refraction_index;
 };
 
 #define TYPE_SPHERE 0

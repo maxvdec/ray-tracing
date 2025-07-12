@@ -18,21 +18,23 @@ struct SwiftMaterial {
     var albedo: SIMD4<Float> = .init(1, 1, 1, 1)
     var emission_color: SIMD4<Float> = .init(0, 0, 0, 1)
     var reflection_fuzz: Float = 0.0
+    var refraction_index: Float = 0.0
     
     func toMaterial() -> MeshMaterial {
-        return MeshMaterial(type: type.rawValue, emission: emission, albedo: albedo, emission_color: emission_color, reflection_fuzz: reflection_fuzz)
+        return MeshMaterial(type: type.rawValue, emission: emission, albedo: albedo, emission_color: emission_color, reflection_fuzz: reflection_fuzz, refraction_index: refraction_index)
     }
     
     init(color: SIMD4<Float>) {
         self.albedo = color
     }
     
-    init(type: MaterialType = .lambertian, emission: Float = 0.0, albedo: SIMD4<Float> = .init(1, 1, 1, 1), emission_color: SIMD4<Float> = .init(0, 0, 0, 1), reflection_fuzz: Float = 0.0) {
+    init(type: MaterialType = .lambertian, emission: Float = 0.0, albedo: SIMD4<Float> = .init(1, 1, 1, 1), emission_color: SIMD4<Float> = .init(0, 0, 0, 1), reflection_fuzz: Float = 0.0, refraction_index: Float = 0.0) {
         self.type = type
         self.emission = emission
         self.albedo = albedo
         self.emission_color = emission_color
         self.reflection_fuzz = reflection_fuzz
+        self.refraction_index = refraction_index
     }
     
     static func light(strength: Float, color: SIMD4<Float> = .init(1, 1, 1, 1)) -> SwiftMaterial {
@@ -56,7 +58,7 @@ struct ContentView: View {
                         initRayTracing(renderer: renderer, geometry: geometry)
                         let material_ground = SwiftMaterial(color: [0.8, 0.8, 0.0, 1.0]).toMaterial()
                         let material_center = SwiftMaterial(color: [0.1, 0.2, 0.5, 1.0]).toMaterial()
-                        let material_left = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.8, 0.8, 1.0], reflection_fuzz: 0.7).toMaterial()
+                        let material_left = SwiftMaterial(type: .dielectric, refraction_index: 1.5).toMaterial()
                         let material_right = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.6, 0.2, 1.0], reflection_fuzz: 0.3).toMaterial()
                         
                         renderer.objects.append(Object(type: 0, s: Sphere(center: [0, -100.5, -1.0], radius: 100.0), mat: material_ground))
@@ -64,7 +66,7 @@ struct ContentView: View {
                         renderer.objects.append(Object(type: 0, s: Sphere(center: [-1, 0.0, -1], radius: 0.5), mat: material_left))
                         renderer.objects.append(Object(type: 0, s: Sphere(center: [1, 0.0, -1], radius: 0.5), mat: material_right))
                         
-                        renderer.uniforms.globalIllumation = [0.53, 0.81, 0.92, 1.0];
+                        renderer.uniforms.globalIllumation = [0.53, 0.81, 0.92, 1.0]
                     }
                 Button {
                     showSettings.toggle()
@@ -126,19 +128,50 @@ struct ContentView: View {
     }
 }
 
+extension Float {
+    static func fromDegrees(_ degrees: Float) -> Float {
+        return .pi * degrees / 180
+    }
+}
+
+extension SIMD3 where Scalar == Float {
+    func length() -> Float {
+        return sqrt(x * x + y * y + z * z)
+    }
+}
+
 func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
-    let focalLength: Float = 1.0
-    let viewportHeight: Float = 2.0
-    let viewportWidth = viewportHeight * Float(geometry.size.width / geometry.size.height)
-    let cameraCenter = SIMD3<Float>(0.0, 0.0, 0.0)
+    let lookFrom: SIMD3<Float> = [0, 0, 0]
+    let lookAt: SIMD3<Float> = [0, 0, 1]
+    let vUp: SIMD3<Float> = [0, 1, 0]
+    let defocusAngle: Float = 10.0
+    let focusDistance: Float = 3.4
     
-    let viewportU = SIMD3<Float>(viewportWidth, 0, 0)
-    let viewportV = SIMD3<Float>(0, -viewportHeight, 0)
+    let cameraCenter = lookFrom
+    
+    let vfov: Float = 70.0
+    let theta = Float.fromDegrees(vfov)
+    let h = tan(theta / 2)
+
+    let w = normalize(lookFrom - lookAt)
+    let u = normalize(cross(vUp, w));
+    let v = cross(w, u)
+    
+    let viewportHeight: Float = 2 * h * focusDistance
+    let viewportWidth = viewportHeight * Float(geometry.size.width / geometry.size.height)
+    
+    let viewportU = viewportWidth * u
+    let viewportV = viewportHeight * -v
     
     let pixelDeltaX = viewportU / Float(geometry.size.width)
     let pixelDeltaY = viewportV / Float(geometry.size.height)
     
-    let viewportUpperLeft = cameraCenter - SIMD3<Float>(0, 0, focalLength) - viewportU / 2 - viewportV / 2
+    let viewportUpperLeft = cameraCenter - focusDistance * w - viewportU / 2 - viewportV / 2
+    
+    let defocus_radius = focusDistance * tan(Float.fromDegrees(defocusAngle / 2))
+    renderer.uniforms.defocusDiskU = u * defocus_radius
+    renderer.uniforms.defocusDiskV = v * defocus_radius
+    renderer.uniforms.defocusAngle = defocusAngle
     
     let firstPixelPos = viewportUpperLeft + 0.5 * (pixelDeltaX + pixelDeltaY)
     
@@ -152,6 +185,7 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.sampleCount = 32
     renderer.uniforms.maxRayDepth = 10
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
+  
 }
 
 struct MetalView: NSViewRepresentable {

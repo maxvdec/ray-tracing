@@ -24,6 +24,7 @@ enum ShapeType: Int32 {
 enum MaterialType: Int32 {
     case lambertian = 0
     case reflectee = 1
+    case dielectric = 2
     
     func asString() -> String {
         switch self {
@@ -31,6 +32,8 @@ enum MaterialType: Int32 {
             return "Lambertian"
         case .reflectee:
             return "Reflectee"
+        case .dielectric:
+            return "Dielectric"
         }
     }
 }
