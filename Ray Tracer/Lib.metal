@@ -5,9 +5,38 @@
 //  Created by Max Van den Eynde on 11/7/25.
 //
 
+#ifndef LIB_METAL
+#define LIB_METAL
+
 #include <metal_stdlib>
 #include "Definitions.h"
 using namespace metal;
+
+enum class Axis {
+    X,
+    Y,
+    Z
+};
+
+Axis axisFromNumber(int n) {
+    if (n == 0) {
+        return Axis::X;
+    } else if (n == 1) {
+        return Axis::Y;
+    } else {
+        return Axis::Z;
+    }
+}
+
+float vectorAtAxis(float3 vec, Axis a) {
+    if (a == Axis::X) {
+        return vec.x;
+    } else if (a == Axis::Y) {
+        return vec.y;
+    } else {
+        return vec.z;
+    }
+}
 
 struct Interval {
     float min;
@@ -27,6 +56,20 @@ struct Interval {
     
     float clamp(float x) {
         return metal::clamp(x, min, max);
+    }
+    
+    Interval expand(float delta) {
+        auto padding = delta / 2;
+        return {min - padding, max + padding};
+    }
+    
+    Interval(float min, float max) : min(min), max(max) {}
+    
+    Interval() : min(0), max(0) {}
+    
+    Interval(Interval a, Interval b) {
+        min = a.min <= b.min ? a.min : b.min;
+        max = a.max >= b.max ? a.max : b.max;
     }
 };
 
@@ -208,3 +251,14 @@ bool materialScatters(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenua
         return false;
     }
 }
+
+int random_int(int min, int max, thread float2& seed) {
+    float random = random_in_range(Interval(min, max + 1), seed);
+    if (random > max) {
+        return max;
+    } else {
+        return trunc(random);
+    }
+}
+
+#endif

@@ -38,6 +38,8 @@
 		62981C842E20D95A0032B29A /* Exceptions for "Ray Tracer" folder in "Ray Tracer" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				BVH.metal,
+				Hit.metal,
 				Lib.metal,
 			);
 			target = 62981C4C2E201F850032B29A /* Ray Tracer */;

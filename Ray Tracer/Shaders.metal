@@ -7,49 +7,18 @@
 
 #include <metal_stdlib>
 #include "Lib.metal"
+#include "Hit.metal"
+#include "BVH.metal"
 using namespace metal;
 
-bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
-    float3 oc = r.origin - s.center;
-    auto a = dot(r.direction, r.direction);
-    auto b = dot(oc, r.direction);
-    auto c = dot(oc, oc) - s.radius * s.radius;
-    
-    auto discriminant = b * b - a * c;
-    if (discriminant < 0) {
-        return false;
-    }
-    
-    if (abs(a) < 1e-6) {
-        return false;
-    }
-    
-    auto sqrtd = sqrt(discriminant);
-    
-    auto root = (-b - sqrtd) / a;
-    if (!r.distance.surrounds(root)) {
-        root = (-b + sqrtd) / a;
-        if (!r.distance.surrounds(root)) {
-            return false;
-        }
-    }
-    
-    hit.distance = root;
-    hit.point = r.at(root);
-    float3 normals = (hit.point - s.center) / s.radius;
-    hit.apply_normals(r, normals);
-    
-    return true;
-}
-
-bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread HitInfo& hit, thread int& hitObjectIndex) {
+bool world_hit(device Object* objs, int objectCount, thread Ray& r, thread HitInfo& hit, thread int& hitObjectIndex) {
     HitInfo temp_hit;
     bool hit_anything = false;
     auto closest_so_far = r.distance.max;
     
     for (int i = 0; i < objectCount; ++i) {
         Object obj = objs[i];
-        if (obj.type == TYPE_SPHERE && hitSphere(obj.s, r, temp_hit)) {
+        if (hit_object(obj, r, temp_hit)) {
             if (temp_hit.distance < closest_so_far) {
                 hit_anything = true;
                 closest_so_far = temp_hit.distance;
@@ -63,7 +32,54 @@ bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread Hit
     return hit_anything;
 }
 
-float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& seed, int maxDepth, float4 baseSkyColor) {
+bool world_hit_bvh(device Object* objs, device BVHNode* nodes, int rootNodeIndex, thread Ray& r, thread HitInfo& hit, thread int& hitObjectIndex) {
+    if (rootNodeIndex < 0) {
+        return false;
+    }
+    
+    HitInfo temp_hit;
+    bool hit_anything = false;
+    auto closest_so_far = r.distance.max;
+    
+    int stack[64];
+    int stackSize = 0;
+    
+    stack[stackSize++] = rootNodeIndex;
+    
+    while (stackSize > 0) {
+        int nodeIndex = stack[--stackSize];
+        BVHNode node = nodes[nodeIndex];
+        
+        Ray tempRay = r;
+        if (!node.box.hit(tempRay)) {
+            continue;
+        }
+        
+        if (node.is_leaf) {
+            for (int objIdx = node.left_index; objIdx <= node.right_index; objIdx++) {
+                Object obj = objs[objIdx];
+                if (hit_object(obj, r, temp_hit)) {
+                    if (temp_hit.distance < closest_so_far) {
+                        hit_anything = true;
+                        closest_so_far = temp_hit.distance;
+                        hit = temp_hit;
+                        hitObjectIndex = objIdx;
+                        r.distance.max = closest_so_far;
+                    }
+                }
+            }
+        } else {
+            if (stackSize < 62) {
+                stack[stackSize++] = node.left_index;
+                stack[stackSize++] = node.right_index;
+            }
+        }
+    }
+    
+    return hit_anything;
+}
+
+float4 color_ray(device Object* objs, int objectCount, device BVHNode* nodes, int rootNodeIndex, Ray r, thread float2& seed, int maxDepth, float4 baseSkyColor, bool useBVH) {
     float4 accumulatedColor = float4(1.0, 1.0, 1.0, 1.0);
     float4 finalColor = float4(0.0);
     
@@ -72,8 +88,16 @@ float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& s
         
         HitInfo info;
         int hitObjectIndex = -1;
+        bool hit_something = false;
         
-        if (world_hit(objs, objectCount, r, info, hitObjectIndex)) {
+        if (useBVH && rootNodeIndex >= 0) {
+            hit_something = world_hit_bvh(objs, nodes, rootNodeIndex, r, info, hitObjectIndex);
+        } else {
+            hit_something = world_hit(objs, objectCount, r, info, hitObjectIndex);
+        }
+        
+        if (hit_something) {
+            return float4(1.0, 0.0, 0.0, 1.0);
             Object hitObject = objs[hitObjectIndex];
             
             if (hitObject.mat.emission > 0.0) {
@@ -93,16 +117,14 @@ float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& s
             }
         } else {
             float t = 0.5f * (normalize(r.direction).y + 1.0f);
-            float4 skyColor = (1.0f - t) * float4(1.0f, 1.0f, 1.0f, 1.0f) + t * baseSkyColor;
-            finalColor += accumulatedColor * skyColor;
+            float4 skyColor = baseSkyColor * (1.0f + t);
+            finalColor += skyColor;
             break;
-            
         }
     }
 
     return finalColor;
 }
-
 
 void write_color(texture2d<float, access::read_write> texture, uint2 pos, float4 color) {
     Interval i = {0, 1};
@@ -124,9 +146,21 @@ void error_write(texture2d<float, access::read_write> texture, uint2 pos) {
     texture.write(float4(1.0, 1.0, 0.0, 1.0), pos);
 }
 
+AABB makeMainBox(device Object* objs, Uniforms uniforms) {
+    AABB box;
+    for (int i = 0; i < uniforms.objCount; ++i) {
+        Object obj = objs[i];
+        if (obj.type == TYPE_SPHERE) {
+            addChildren(box, aabbForSphere(obj.s));
+        }
+    }
+    return box;
+}
+
 kernel void computeShader(texture2d<float, access::read_write> outputTexture [[texture(0)]],
                                           constant Uniforms& uniforms [[buffer(0)]],
-                                          constant Object* objs [[buffer(1)]],
+                                          device Object* objs [[buffer(1)]],
+                                          device BVHNode* nodes [[buffer(2)]],
                                           uint2 gid [[thread_position_in_grid]]) {
     
     uint width = outputTexture.get_width();
@@ -153,6 +187,10 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
     
     float4 passAccumulator = float4(0.0);
     
+    // Determine if we should use BVH (you might want to add a flag to uniforms for this)
+    bool useBVH = false; // You can make this configurable via uniforms
+    int rootNodeIndex = 0; // Assuming root is at index 0, adjust as needed
+    
     for (int rayIndex = 0; rayIndex < raysPerPass; rayIndex++) {
         float2 seed = float2(
             float(pixelPos.x * 1973 + pixelPos.y * 9277 + uniforms.currentSample * 26699 + rayIndex * 7919) / 65536.0,
@@ -168,7 +206,7 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
         }
         
         int safeMaxDepth = min(uniforms.maxRayDepth, 10);
-        float4 rayColor = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth, uniforms.globalIllumation);
+        float4 rayColor = color_ray(objs, uniforms.objCount, nodes, rootNodeIndex, r, seed, safeMaxDepth, uniforms.globalIllumation, useBVH);
         
         rayColor.rgb = clamp(rayColor.rgb, 0.0, 10.0);
         

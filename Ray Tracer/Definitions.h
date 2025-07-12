@@ -42,9 +42,15 @@ struct Uniforms {
     simd_float4 globalIllumation;
 };
 
+struct BoundingBox {
+    simd_float3 a;
+    simd_float3 b;
+};
+
 struct Sphere {
     simd_float3 center;
     float radius;
+    struct BoundingBox aabbData;
 };
 
 #define LAMBIERTIAN 0

@@ -42,6 +42,97 @@ struct SwiftMaterial {
     }
 }
 
+struct Interval {
+    let min: Float
+    let max: Float
+}
+
+struct AABB {
+    let x: Interval
+    let y: Interval
+    let z: Interval
+}
+
+struct BVHNode {
+    var left_index: Int = 0
+    var right_index: Int = 0
+    var is_leaf: Bool = true
+    var box: AABB = AABB(x: Interval(min: 0, max: 0), y: Interval(min: 0, max: 0), z: Interval(min: 0, max: 0))
+}
+
+func makeSphere(center: SIMD3<Float>, radius: Float) -> Sphere {
+    var sphere = Sphere()
+    sphere.center = center
+    sphere.radius = radius
+    let rvec = simd_float3(sphere.radius, sphere.radius, sphere.radius)
+    sphere.aabbData.a = center - rvec
+    sphere.aabbData.b = center + rvec
+    return sphere
+}
+
+struct CPUInterval {
+    var min: Float
+    var max: Float
+    
+    init(_ min: Float, _ max: Float) {
+        self.min = min
+        self.max = max
+    }
+}
+
+struct CPUAABB {
+    var x: CPUInterval
+    var y: CPUInterval
+    var z: CPUInterval
+    
+    init() {
+        x = CPUInterval(Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude)
+        y = CPUInterval(Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude)
+        z = CPUInterval(Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude)
+    }
+    
+    init(x: CPUInterval, y: CPUInterval, z: CPUInterval) {
+        self.x = x
+        self.y = y
+        self.z = z
+    }
+    
+    init(_ a: SIMD3<Float>, _ b: SIMD3<Float>) {
+        x = CPUInterval(min(a.x, b.x), max(a.x, b.x))
+        y = CPUInterval(min(a.y, b.y), max(a.y, b.y))
+        z = CPUInterval(min(a.z, b.z), max(a.z, b.z))
+    }
+    
+    static func combine(_ box0: CPUAABB, _ box1: CPUAABB) -> CPUAABB {
+        return CPUAABB(
+            x: CPUInterval(min(box0.x.min, box1.x.min), max(box0.x.max, box1.x.max)),
+            y: CPUInterval(min(box0.y.min, box1.y.min), max(box0.y.max, box1.y.max)),
+            z: CPUInterval(min(box0.z.min, box1.z.min), max(box0.z.max, box1.z.max))
+        )
+    }
+}
+
+struct CPUBVHNode {
+    var leftIndex: Int = 0
+    var rightIndex: Int = 0
+    var isLeaf: Bool = false
+    var box: CPUAABB = CPUAABB()
+    
+    // Convert to Metal BVHNode format
+    func toMetalBVHNode() -> BVHNode {
+        return BVHNode(
+            left_index: leftIndex,
+            right_index: rightIndex,
+            is_leaf: isLeaf,
+            box: AABB(
+                x: Interval(min: box.x.min, max: box.x.max),
+                y: Interval(min: box.y.min, max: box.y.max),
+                z: Interval(min: box.z.min, max: box.z.max)
+            )
+        )
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var renderer: MetalRenderer
     @State private var isRendering = false
@@ -56,17 +147,15 @@ struct ContentView: View {
                                               height: Int(geometry.size.height))
                         
                         initRayTracing(renderer: renderer, geometry: geometry)
-                        let material_ground = SwiftMaterial(color: [0.8, 0.8, 0.0, 1.0]).toMaterial()
-                        let material_center = SwiftMaterial(color: [0.1, 0.2, 0.5, 1.0]).toMaterial()
-                        let material_left = SwiftMaterial(type: .dielectric, refraction_index: 1.5).toMaterial()
-                        let material_right = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.6, 0.2, 1.0], reflection_fuzz: 0.3).toMaterial()
+                        let material_ground = SwiftMaterial(color: [0.8, 0.8, 0.8, 1.0]).toMaterial()
+                        let material_left = SwiftMaterial(type: .dielectric, emission: 1, refraction_index: 1.5).toMaterial()
+                        let material_right = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.6, 0.2, 1.0], reflection_fuzz: 0).toMaterial()
                         
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: [0, -100.5, -1.0], radius: 100.0), mat: material_ground))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: [0.0, 0.0, -1.2], radius: 0.5), mat: material_center))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: [-1, 0.0, -1], radius: 0.5), mat: material_left))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: [1, 0.0, -1], radius: 0.5), mat: material_right))
+                        renderer.objects.append(Object(type: 0, s: makeSphere(center: [0, -100.5, 0], radius: 100), mat: material_ground))
+                        renderer.objects.append(Object(type: 0, s: makeSphere(center: [0.5, 0.0, -1.2], radius: 0.5), mat: material_right))
+                        renderer.objects.append(Object(type: 0, s: makeSphere(center: [-0.5, 0.0, -1.2], radius: 0.5), mat: material_left))
                         
-                        renderer.uniforms.globalIllumation = [0.53, 0.81, 0.92, 1.0]
+                        renderer.uniforms.globalIllumation = [0.00, 0.00, 0.00, 1.00]
                     }
                 Button {
                     showSettings.toggle()
@@ -141,11 +230,11 @@ extension SIMD3 where Scalar == Float {
 }
 
 func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
-    let lookFrom: SIMD3<Float> = [0, 0, 0]
-    let lookAt: SIMD3<Float> = [0, 0, 1]
+    let lookFrom: SIMD3<Float> = [0, 0, 1]
+    let lookAt: SIMD3<Float> = [0, 0, -1]
     let vUp: SIMD3<Float> = [0, 1, 0]
-    let defocusAngle: Float = 10.0
-    let focusDistance: Float = 3.4
+    let defocusAngle: Float = 1.0
+    let focusDistance: Float = 1.0
     
     let cameraCenter = lookFrom
     
@@ -154,7 +243,7 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     let h = tan(theta / 2)
 
     let w = normalize(lookFrom - lookAt)
-    let u = normalize(cross(vUp, w));
+    let u = normalize(cross(vUp, w))
     let v = cross(w, u)
     
     let viewportHeight: Float = 2 * h * focusDistance
@@ -185,7 +274,6 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.sampleCount = 32
     renderer.uniforms.maxRayDepth = 10
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
-  
 }
 
 struct MetalView: NSViewRepresentable {
@@ -214,6 +302,7 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         
     @Published var objects: [Object] = [] {
         didSet {
+            makeBuffer()
             // Trigger UI update when objects change
             DispatchQueue.main.async {
                 self.objectWillChange.send()
@@ -234,6 +323,11 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     private var textureWidth: Int = 0
     private var textureHeight: Int = 0
     private var needsUpdate = false
+    
+    private var objectBuffer: MTLBuffer? = nil
+    private var boxBuffer: MTLBuffer? = nil
+    
+    var boxes: [BVHNode] = []
         
     private var time: Float = 0.0
         
@@ -299,6 +393,107 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
     override init() {
         super.init()
         setupMetal()
+    }
+    
+    private func aabbForObject(_ object: Object) -> CPUAABB {
+        if object.type == 0 { // TYPE_SPHERE
+            let sphere = object.s
+            return CPUAABB(sphere.aabbData.a, sphere.aabbData.b)
+        }
+        return CPUAABB()
+    }
+
+    private func buildBVH() -> [CPUBVHNode] {
+        guard !objects.isEmpty else { return [] }
+        
+        var nodes: [CPUBVHNode] = []
+        var nodeCount = 0
+        
+        // Sort objects by a random axis initially
+        let axis = Int.random(in: 0...2)
+        sortObjectsByAxis(axis: axis)
+        
+        _ = buildBVHRecursive(start: 0, end: objects.count, nodes: &nodes, nodeCount: &nodeCount)
+        
+        return nodes
+    }
+
+    private func buildBVHRecursive(start: Int, end: Int, nodes: inout [CPUBVHNode], nodeCount: inout Int) -> Int {
+        let nodeIndex = nodeCount
+        nodeCount += 1
+        
+        // Ensure we have enough space
+        while nodes.count <= nodeIndex {
+            nodes.append(CPUBVHNode())
+        }
+        
+        let objectSpan = end - start
+        
+        if objectSpan == 1 {
+            // Single object leaf
+            nodes[nodeIndex].leftIndex = start
+            nodes[nodeIndex].rightIndex = start
+            nodes[nodeIndex].isLeaf = true
+            nodes[nodeIndex].box = aabbForObject(objects[start])
+        } else if objectSpan == 2 {
+            // Two object leaf
+            nodes[nodeIndex].leftIndex = start
+            nodes[nodeIndex].rightIndex = start + 1
+            nodes[nodeIndex].isLeaf = true
+            nodes[nodeIndex].box = CPUAABB.combine(
+                aabbForObject(objects[start]),
+                aabbForObject(objects[start + 1])
+            )
+        } else {
+            // Internal node
+            let axis = Int.random(in: 0...2)
+            sortObjectsByAxis(start: start, end: end, axis: axis)
+            
+            let mid = start + objectSpan / 2
+            
+            let leftChildIndex = buildBVHRecursive(start: start, end: mid, nodes: &nodes, nodeCount: &nodeCount)
+            let rightChildIndex = buildBVHRecursive(start: mid, end: end, nodes: &nodes, nodeCount: &nodeCount)
+            
+            nodes[nodeIndex].leftIndex = leftChildIndex
+            nodes[nodeIndex].rightIndex = rightChildIndex
+            nodes[nodeIndex].isLeaf = false
+            nodes[nodeIndex].box = CPUAABB.combine(nodes[leftChildIndex].box, nodes[rightChildIndex].box)
+        }
+        
+        return nodeIndex
+    }
+
+    private func sortObjectsByAxis(start: Int = 0, end: Int? = nil, axis: Int) {
+        let endIndex = end ?? objects.count
+        
+        objects[start..<endIndex].sort { obj1, obj2 in
+            let box1 = aabbForObject(obj1)
+            let box2 = aabbForObject(obj2)
+            
+            switch axis {
+            case 0: return box1.x.min < box2.x.min
+            case 1: return box1.y.min < box2.y.min
+            case 2: return box1.z.min < box2.z.min
+            default: return box1.x.min < box2.x.min
+            }
+        }
+    }
+
+    
+    private func makeBuffer() {
+        objectBuffer = device.makeBuffer(bytes: &objects, length: MemoryLayout<Object>.stride * objects.count)
+        
+        let cpuNodes = buildBVH()
+        
+        boxes = cpuNodes.map { $0.toMetalBVHNode() }
+        
+        while boxes.count < max(1, 2 * objects.count - 1) {
+            boxes.append(BVHNode())
+        }
+        
+        boxBuffer = device.makeBuffer(bytes: &boxes, length: MemoryLayout<BVHNode>.stride * boxes.count)
+        
+        print("Built BVH with \(boxes.count) nodes for \(objects.count) objects")
     }
     
     private func setupMetal() {
@@ -665,10 +860,15 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         computeEncoder.setBytes(&sampleUniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
             
         if objects.count != 0 {
-            computeEncoder.setBytes(&objects, length: MemoryLayout<Object>.stride * objects.count, index: 1)
+            computeEncoder.setBuffer(objectBuffer!, offset: 0, index: 1)
+            computeEncoder.setBuffer(boxBuffer!, offset: 0, index: 2)
         } else {
             var dummy = Object()
-            computeEncoder.setBytes(&dummy, length: MemoryLayout<Object>.stride, index: 1)
+            if objectBuffer == nil {
+                objectBuffer = device.makeBuffer(bytes: &dummy, length: MemoryLayout<Object>.stride)
+            }
+            computeEncoder.setBuffer(objectBuffer!, offset: 0, index: 1)
+            computeEncoder.setBuffer(boxBuffer, offset: 0, index: 2)
         }
         
         let threadGroupSize = MTLSize(width: 8, height: 8, depth: 1)
