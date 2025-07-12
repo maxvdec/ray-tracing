@@ -47,6 +47,12 @@ struct Sphere {
     float radius;
 };
 
+struct Quad {
+    simd_float3 origin;
+    simd_float3 extentX;
+    simd_float3 extentY;
+};
+
 #define LAMBIERTIAN 0
 #define REFLECTEE 1
 #define DIELECTRIC 2
@@ -62,10 +68,12 @@ struct MeshMaterial {
 };
 
 #define TYPE_SPHERE 0
+#define TYPE_QUAD 1
 
 struct Object {
     int type;
     struct Sphere s; // Only used when Sphere is selected
+    struct Quad q;
     struct MeshMaterial mat;
 };
 

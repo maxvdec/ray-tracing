@@ -47,6 +47,9 @@ struct HitInfo {
     float distance;
     bool hit_front;
     
+    float u;
+    float v;
+    
     void apply_normals(Ray r, float3 outward_normals) {
         hit_front = dot(r.direction, outward_normals) < 0;
         normal = hit_front ? outward_normals : -outward_normals;
@@ -204,6 +207,84 @@ bool materialScatters(MeshMaterial m, Ray r, HitInfo hit, thread float4& attenua
         return metalScatter(m, r, hit, attenuation, scattered, seed);
     } else if (m.type == DIELECTRIC) {
         return dielectricScatter(m, r, hit, attenuation, scattered, seed);
+    } else {
+        return false;
+    }
+}
+
+bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
+    float3 oc = r.origin - s.center;
+    auto a = dot(r.direction, r.direction);
+    auto b = dot(oc, r.direction);
+    auto c = dot(oc, oc) - s.radius * s.radius;
+    
+    auto discriminant = b * b - a * c;
+    if (discriminant < 0) {
+        return false;
+    }
+    
+    if (abs(a) < 1e-6) {
+        return false;
+    }
+    
+    auto sqrtd = sqrt(discriminant);
+    
+    auto root = (-b - sqrtd) / a;
+    if (!r.distance.surrounds(root)) {
+        root = (-b + sqrtd) / a;
+        if (!r.distance.surrounds(root)) {
+            return false;
+        }
+    }
+    
+    hit.distance = root;
+    hit.point = r.at(root);
+    float3 normals = (hit.point - s.center) / s.radius;
+    hit.apply_normals(r, normals);
+    
+    return true;
+}
+
+bool hitPlane(Quad q, Ray r, thread HitInfo& hit) {
+    auto n = cross(q.extentX, q.extentY);
+    auto normal = normalize(n);
+    
+    auto denom = dot(normal, r.direction);
+    
+    if (fabs(denom) < 1e-8) {
+        return false;
+    }
+    
+    auto t = dot(normal, q.origin - r.origin) / denom;
+    if (!r.distance.contains(t)) {
+        return false;
+    }
+    
+    auto inter = r.at(t);
+    
+    auto toPoint = inter - q.origin;
+    auto dotU = dot(toPoint, normalize(q.extentX));
+    auto dotV = dot(toPoint, normalize(q.extentY));
+    
+    float uLen = length(q.extentX);
+    float vLen = length(q.extentY);
+    
+    if (dotU < 0 || dotU > uLen || dotV < 0 || dotV > vLen) {
+        return false;
+    }
+    
+    hit.distance = t;
+    hit.point = inter;
+    hit.apply_normals(r, normal);
+    return true;
+}
+
+
+bool hitObject(Object obj, Ray r, thread HitInfo& info) {
+    if (obj.type == TYPE_SPHERE && hitSphere(obj.s, r, info)) {
+        return true;
+    } else if (obj.type == TYPE_QUAD && hitPlane(obj.q, r, info)) {
+        return true;
     } else {
         return false;
     }

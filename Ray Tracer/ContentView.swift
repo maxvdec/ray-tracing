@@ -28,6 +28,8 @@ struct SwiftMaterial {
         self.albedo = color
     }
     
+    init() {}
+    
     init(type: MaterialType = .lambertian, emission: Float = 0.0, albedo: SIMD4<Float> = .init(1, 1, 1, 1), emission_color: SIMD4<Float> = .init(0, 0, 0, 1), reflection_fuzz: Float = 0.0, refraction_index: Float = 0.0) {
         self.type = type
         self.emission = emission
@@ -40,6 +42,14 @@ struct SwiftMaterial {
     static func light(strength: Float, color: SIMD4<Float> = .init(1, 1, 1, 1)) -> SwiftMaterial {
         return SwiftMaterial(type: .lambertian, emission: strength, albedo: .init(1, 1, 1, 1), emission_color: color)
     }
+}
+
+func makeSphere(center: SIMD3<Float> = [0, 0, 0], radius: Float = 0.0, material: SwiftMaterial = SwiftMaterial(), scale: Float = 1.0) -> Object {
+    return Object(type: 0, s: Sphere(center: center * scale, radius: radius * scale), q: Quad(origin: .init(), extentX: .init(), extentY: .init()), mat: material.toMaterial())
+}
+
+func makeQuad(origin: SIMD3<Float> = [0, 0, 0], extentX: SIMD3<Float> = .init(), extentY: SIMD3<Float> = .init(), material: SwiftMaterial = SwiftMaterial(), scale: Float = 1.0) -> Object {
+    return Object(type: 1, s: Sphere(center: .init(), radius: 0), q: Quad(origin: origin * scale, extentX: extentX * scale, extentY: extentY * scale), mat: material.toMaterial())
 }
 
 struct ContentView: View {
@@ -56,17 +66,32 @@ struct ContentView: View {
                                               height: Int(geometry.size.height))
                         
                         initRayTracing(renderer: renderer, geometry: geometry)
-                        let material_ground = SwiftMaterial(color: [0.8, 0.8, 0.0, 1.0]).toMaterial()
-                        let material_center = SwiftMaterial(color: [0.1, 0.2, 0.5, 1.0]).toMaterial()
-                        let material_left = SwiftMaterial(type: .dielectric, refraction_index: 1.5).toMaterial()
-                        let material_right = SwiftMaterial(type: .reflectee, albedo: [0.8, 0.6, 0.2, 1.0], reflection_fuzz: 0.3).toMaterial()
                         
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: [0, -100.5, -1.0], radius: 100.0), mat: material_ground))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: [0.0, 0.0, -1.2], radius: 0.5), mat: material_center))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: [-1, 0.0, -1], radius: 0.5), mat: material_left))
-                        renderer.objects.append(Object(type: 0, s: Sphere(center: [1, 0.0, -1], radius: 0.5), mat: material_right))
+                        let scale: Float = 1
                         
-                        renderer.uniforms.globalIllumation = [0.53, 0.81, 0.92, 1.0]
+                        let red = SwiftMaterial(type: .lambertian, albedo: [0.65, 0.05, 0.05, 1.0], reflection_fuzz: 0.8, refraction_index: 0.75)
+                        let white = SwiftMaterial(type: .lambertian, albedo: [0.73, 0.73, 0.73, 1.0])
+                        let green = SwiftMaterial(type: .lambertian, albedo: [0.12, 0.45, 0.15, 1.0], reflection_fuzz: 0.8, refraction_index: 0.75)
+                        let light = SwiftMaterial(type: .lambertian, emission: 15.0, emission_color: [1.0, 1.0, 1.0, 1.0])
+
+                        renderer.objects.append(makeQuad(origin: [0, 0, 0], extentX: [0, 555, 0], extentY: [0, 0, 555], material: red, scale: scale))
+
+                        renderer.objects.append(makeQuad(origin: [555, 0, 0], extentX: [0, 555, 0], extentY: [0, 0, 555], material: green, scale: scale))
+
+                        renderer.objects.append(makeQuad(origin: [0, 0, 0], extentX: [555, 0, 0], extentY: [0, 0, 555], material: white, scale: scale))
+
+                        renderer.objects.append(makeQuad(origin: [0, 555, 0], extentX: [555, 0, 0], extentY: [0, 0, 555], material: white, scale: scale))
+
+                        renderer.objects.append(makeQuad(origin: [0, 0, 555], extentX: [555, 0, 0], extentY: [0, 555, 0], material: white, scale: scale))
+
+                        renderer.objects.append(makeQuad(origin: [213, 554, 227], extentX: [130, 0, 0], extentY: [0, 0, 105], material: light, scale: scale))
+                        
+                        let glass = SwiftMaterial(type: .dielectric, albedo: [1.0, 1.0, 1.0, 1.0], refraction_index: 1.5)
+                        let crystalBallCenter = SIMD3<Float>(278, 90, 278)
+                        let crystalBallRadius: Float = 90
+                        renderer.objects.append(makeSphere(center: crystalBallCenter, radius: crystalBallRadius, material: glass, scale: scale))
+                        
+                        renderer.uniforms.globalIllumation = [0.1, 0.1, 0.1, 1.0]
                     }
                 Button {
                     showSettings.toggle()
@@ -141,20 +166,20 @@ extension SIMD3 where Scalar == Float {
 }
 
 func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
-    let lookFrom: SIMD3<Float> = [0, 0, 0]
-    let lookAt: SIMD3<Float> = [0, 0, 1]
+    let lookFrom: SIMD3<Float> = [278, 278, -800]
+    let lookAt: SIMD3<Float> = [278, 278, 0]
     let vUp: SIMD3<Float> = [0, 1, 0]
-    let defocusAngle: Float = 10.0
-    let focusDistance: Float = 3.4
+    let defocusAngle: Float = 0
+    let focusDistance: Float = 1
     
     let cameraCenter = lookFrom
     
-    let vfov: Float = 70.0
+    let vfov: Float = 40.0
     let theta = Float.fromDegrees(vfov)
     let h = tan(theta / 2)
 
     let w = normalize(lookFrom - lookAt)
-    let u = normalize(cross(vUp, w));
+    let u = normalize(cross(vUp, w))
     let v = cross(w, u)
     
     let viewportHeight: Float = 2 * h * focusDistance
@@ -180,12 +205,11 @@ func initRayTracing(renderer: MetalRenderer, geometry: GeometryProxy) {
     renderer.uniforms.pixelDeltaY = pixelDeltaY
     renderer.uniforms.cameraCenter = cameraCenter
     renderer.uniforms.viewportSize = SIMD2<Float>(Float(geometry.size.width), Float(geometry.size.height))
-    renderer.maxIterations = 5
+    renderer.maxIterations = 400
     
     renderer.uniforms.sampleCount = 32
     renderer.uniforms.maxRayDepth = 10
     renderer.uniforms.pixelSampleScale = 1.0 / Float(renderer.uniforms.sampleCount)
-  
 }
 
 struct MetalView: NSViewRepresentable {
@@ -726,3 +750,4 @@ class MetalRenderer: NSObject, ObservableObject, MTKViewDelegate {
         commandBuffer.waitUntilCompleted()
     }
 }
+

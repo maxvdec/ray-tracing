@@ -9,38 +9,6 @@
 #include "Lib.metal"
 using namespace metal;
 
-bool hitSphere(Sphere s, Ray r, thread HitInfo& hit) {
-    float3 oc = r.origin - s.center;
-    auto a = dot(r.direction, r.direction);
-    auto b = dot(oc, r.direction);
-    auto c = dot(oc, oc) - s.radius * s.radius;
-    
-    auto discriminant = b * b - a * c;
-    if (discriminant < 0) {
-        return false;
-    }
-    
-    if (abs(a) < 1e-6) {
-        return false;
-    }
-    
-    auto sqrtd = sqrt(discriminant);
-    
-    auto root = (-b - sqrtd) / a;
-    if (!r.distance.surrounds(root)) {
-        root = (-b + sqrtd) / a;
-        if (!r.distance.surrounds(root)) {
-            return false;
-        }
-    }
-    
-    hit.distance = root;
-    hit.point = r.at(root);
-    float3 normals = (hit.point - s.center) / s.radius;
-    hit.apply_normals(r, normals);
-    
-    return true;
-}
 
 bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread HitInfo& hit, thread int& hitObjectIndex) {
     HitInfo temp_hit;
@@ -49,7 +17,7 @@ bool world_hit(constant Object* objs, int objectCount, thread Ray& r, thread Hit
     
     for (int i = 0; i < objectCount; ++i) {
         Object obj = objs[i];
-        if (obj.type == TYPE_SPHERE && hitSphere(obj.s, r, temp_hit)) {
+        if (hitObject(obj, r, temp_hit)) {
             if (temp_hit.distance < closest_so_far) {
                 hit_anything = true;
                 closest_so_far = temp_hit.distance;
@@ -73,36 +41,32 @@ float4 color_ray(constant Object* objs, int objectCount, Ray r, thread float2& s
         HitInfo info;
         int hitObjectIndex = -1;
         
-        if (world_hit(objs, objectCount, r, info, hitObjectIndex)) {
-            Object hitObject = objs[hitObjectIndex];
-            
-            if (hitObject.mat.emission > 0.0) {
-                float4 emissionColor = hitObject.mat.emission;
-                finalColor += accumulatedColor * emissionColor;
-                break;
-            }
-            
-            Ray scattered;
-            
-            float4 attenuation;
-            if (materialScatters(hitObject.mat, r, info, attenuation, scattered, seed)) {
-                accumulatedColor *= attenuation;
-                r = scattered;
-            } else {
-                break;
-            }
-        } else {
-            float t = 0.5f * (normalize(r.direction).y + 1.0f);
-            float4 skyColor = (1.0f - t) * float4(1.0f, 1.0f, 1.0f, 1.0f) + t * baseSkyColor;
-            finalColor += accumulatedColor * skyColor;
+        if (!world_hit(objs, objectCount, r, info, hitObjectIndex)) {
+            finalColor += accumulatedColor * baseSkyColor;
             break;
-            
         }
+
+        const Object obj = objs[hitObjectIndex];
+        
+        float4 colorFromEmission = float4(0, 0, 0, 1);
+        if (obj.mat.emission > 0.0f) {
+            colorFromEmission = obj.mat.emission_color * obj.mat.emission;
+        }
+
+        finalColor += accumulatedColor * colorFromEmission;
+
+        Ray scattered;
+        float4 attenuation;
+        if (!materialScatters(obj.mat, r, info, attenuation, scattered, seed)) {
+            break;
+        }
+
+        accumulatedColor *= attenuation;
+        r = scattered;
     }
 
     return finalColor;
 }
-
 
 void write_color(texture2d<float, access::read_write> texture, uint2 pos, float4 color) {
     Interval i = {0, 1};
@@ -167,7 +131,7 @@ kernel void computeShader(texture2d<float, access::read_write> outputTexture [[t
             continue; // Skip invalid rays
         }
         
-        int safeMaxDepth = min(uniforms.maxRayDepth, 10);
+        int safeMaxDepth = uniforms.maxRayDepth;
         float4 rayColor = color_ray(objs, uniforms.objCount, r, seed, safeMaxDepth, uniforms.globalIllumation);
         
         rayColor.rgb = clamp(rayColor.rgb, 0.0, 10.0);

@@ -89,14 +89,14 @@ struct Edit: View {
                     Spacer()
                 }
                 VStack {
-                    Stepper(value: $raysPerPixel, in: 1 ... 100) {
+                    Stepper(value: $raysPerPixel, in: 1 ... 2000) {
                         Text("Rays per pixel (\(Int(raysPerPixel)))")
                     }
                     .onChange(of: raysPerPixel) { newValue in
                         renderer.updateSampleCount(Int32(newValue))
                     }
 
-                    Slider(value: $raysPerPixel, in: 1 ... 100, step: 1, label: {
+                    Slider(value: $raysPerPixel, in: 1 ... 2000, step: 1, label: {
                         EmptyView()
                     }, minimumValueLabel: {
                         Text("1")
@@ -108,14 +108,14 @@ struct Edit: View {
                     }
                     .padding(.bottom)
 
-                    Stepper(value: $rayDepth, in: 1 ... 10) {
+                    Stepper(value: $rayDepth, in: 1 ... 30) {
                         Text("Max Ray Bounces (\(Int(rayDepth)))")
                     }
                     .onChange(of: rayDepth) { newValue in
                         renderer.updateMaxRayDepth(Int32(newValue))
                     }
 
-                    Slider(value: $rayDepth, in: 1 ... 10, step: 1, label: {
+                    Slider(value: $rayDepth, in: 1 ... 30, step: 1, label: {
                         EmptyView()
                     }, minimumValueLabel: {
                         Text("1")
